@@ -10,7 +10,8 @@ Convert PDF files to nicely structured Markdown and EPUB format with intelligent
 - 🖼️ Image extraction and optimization
 - 📝 Clean markdown output with preserved structure
 - 📱 EPUB generation with customizable styling
-- 🌍 Multi-language support
+- 🌐 Multi-language support
+- ⚡ Non-interactive batch conversion with CLI metadata options
 - 🚀 GPU acceleration support (NVIDIA & AMD)
 - 🍎 Apple Silicon support
 
@@ -94,14 +95,22 @@ Run it with your PDFs mounted at `/data` and a model cache volume (marker-pdf
 downloads its models on first run):
 
 ```bash
-docker run -it --rm \
+docker run --rm \
   -v "$(pwd)":/data \
   -v pdf2epub-models:/models \
   pdf2epub input.pdf
 ```
 
 `-it` is required for EPUB generation because metadata is prompted
-interactively; with `--skip-epub` it can run non-interactively.
+interactively; with `--skip-epub`, or with any of the metadata options
+(`--title`, `--author`, …) it can run non-interactively:
+
+```bash
+docker run --rm \
+  -v "$(pwd)":/data \
+  -v pdf2epub-models:/models \
+  pdf2epub input.pdf --title "Dune" --author "Frank Herbert"
+```
 
 Tagged releases are also published to
 `ghcr.io/overcuriousity/pdf2epub` by the Docker workflow.
@@ -123,7 +132,53 @@ python main.py input_directory/
 EPUB generation prompts interactively for metadata (title, author, language,
 and so on; press Enter to accept each default). It therefore needs a terminal —
 run it non-interactively and it will fail with `EOFError`. Use `--skip-epub` to
-produce only markdown without any prompts.
+produce only markdown without any prompts, or supply the metadata options below
+to skip the prompts (see [Batch processing](#batch-processing)).
+
+### Metadata Options
+
+Every EPUB metadata value can be set on the command line, which makes
+non-interactive and batch conversion possible:
+
+```bash
+python main.py book.pdf --title "Dune" --author "Frank Herbert" --publisher "Ace"
+```
+
+| Option | Description | Default |
+| --- | --- | --- |
+| `--title` | Book title | The PDF file name |
+| `--author` | Author(s); separate several names with `;` | `Unknown Author` |
+| `--publisher` | Publisher | `PDF2EPUB` |
+| `--language` | Language code, e.g. `en`, `de`, `fr` | `en` |
+| `--rights` | Rights statement | `All rights reserved` |
+| `--identifier` | Unique identifier | A stable UUID derived from the title |
+| `--date` | Publication date as `YYYY-MM-DD` | Today |
+| `-y`, `--yes` | Accept the defaults for everything not given | — |
+
+Notes:
+
+- `--author "Jane Doe; John Roe"` records two separate `dc:creator` entries.
+  Commas are not treated as separators, so `"Doe, Jane"` stays one name.
+- The title defaults to the PDF's file name rather than `Untitled Document`,
+  so a batch run stays legible.
+- `--identifier` is derived from the title and file name, so re-running the
+  same conversion reproduces the same identifier instead of generating a new
+  one each time.
+
+### Batch Processing
+
+`--title` and `--author` accept the placeholders `{filename}` (with extension)
+and `{stem}` (without). They are filled in per file, so one command converts a
+whole directory without the metadata being copied between books:
+
+```bash
+python main.py ./input/ --title "{stem}" --author "Unknown Author"
+```
+
+The PDF file name is also used to derive a unique `dc:identifier` per book.
+
+Running without a terminal (cron, CI, piped input) no longer crashes with
+`EOFError`: pdf2epub prints a warning and falls back to the defaults above.
 
 ### Advanced Options
 
@@ -135,6 +190,14 @@ Options:
   --start-page INT         Page number to start from
   --skip-epub              Skip EPUB generation, only create markdown
   --skip-md                Skip markdown generation, use existing markdown files
+  --title STR              Book title (supports {stem} and {filename})
+  --author STR             Author(s); separate several names with ";"
+  --publisher STR          Publisher
+  --language STR           Language code, e.g. en, de, fr
+  --rights STR             Rights statement
+  --identifier STR         Unique identifier
+  --date STR               Publication date as YYYY-MM-DD
+  -y, --yes                Accept default metadata instead of prompting
 ```
 
 If `input_path` is omitted, all PDFs in `./input/` are processed.
@@ -149,6 +212,19 @@ python main.py book.pdf --start-page 10 --max-pages 50
 Convert to markdown only:
 ```bash
 python main.py thesis.pdf --skip-epub
+```
+
+Convert a directory unattended, one book per command:
+```bash
+python main.py ./books/ --title "{stem}" --author "Unknown Author" \
+  --publisher "Archive.org" --language en < /dev/null
+```
+
+### Tests
+
+```bash
+pip install pytest
+pytest tests/
 ```
 
 ### Output Structure
