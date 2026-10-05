@@ -43,6 +43,13 @@ def get_metadata_from_user(existing_metadata: Optional[Dict] = None,
     
     updated_metadata = {}
     for key, (prompt, default) in fields.items():
+        if key == "dc:identifier" and not default:
+            # prompt_defaults leaves this empty; derive it from the title the
+            # user just settled on so the identifier matches the real title.
+            default = metadata_lib.default_identifier(
+                updated_metadata.get("dc:title", "") or fallback_title or ""
+            )
+
         value = get_user_input(prompt, default)
         if key == "dc:date" and value:
             try:

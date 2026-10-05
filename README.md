@@ -101,9 +101,10 @@ docker run --rm \
   pdf2epub input.pdf
 ```
 
-`-it` is required for EPUB generation because metadata is prompted
-interactively; with `--skip-epub`, or with any of the metadata options
-(`--title`, `--author`, …) it can run non-interactively:
+Metadata is prompted for interactively when a terminal is attached. Without
+one, pdf2epub warns and falls back to defaults, so `-it` is optional. Passing
+any of the metadata options (`--title`, `--author`, …) sets them explicitly and
+skips the prompts entirely:
 
 ```bash
 docker run --rm \
@@ -130,10 +131,11 @@ python main.py input_directory/
 ```
 
 EPUB generation prompts interactively for metadata (title, author, language,
-and so on; press Enter to accept each default). It therefore needs a terminal —
-run it non-interactively and it will fail with `EOFError`. Use `--skip-epub` to
+and so on; press Enter to accept each default). When a terminal is available
+you can answer those prompts; otherwise pdf2epub prints a warning and uses the
+default metadata, so nothing fails for lack of a TTY. Use `--skip-epub` to
 produce only markdown without any prompts, or supply the metadata options below
-to skip the prompts (see [Batch processing](#batch-processing)).
+to set the values directly (see [Batch processing](#batch-processing)).
 
 ### Metadata Options
 
@@ -179,6 +181,8 @@ The PDF file name is also used to derive a unique `dc:identifier` per book.
 
 Running without a terminal (cron, CI, piped input) no longer crashes with
 `EOFError`: pdf2epub prints a warning and falls back to the defaults above.
+Supply the metadata options to control the values, or `-y` to accept the
+defaults deliberately.
 
 ### Advanced Options
 

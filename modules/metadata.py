@@ -38,14 +38,14 @@ METADATA_FIELDS: Tuple[Tuple[str, str], ...] = (
     ("date", "dc:date"),
 )
 
-# Metadata keys that accept several values and become repeated XML elements.
-MULTI_VALUE_KEYS = frozenset({"dc:creator"})
-
 # Accepted date inputs, normalised to the YYYY-MM-DD that EPUB expects.
 DATE_FORMATS = ("%Y-%m-%d", "%Y/%m/%d", "%d.%m.%Y", "%d-%m-%Y", "%m/%d/%Y", "%Y")
 
 # Separators that turn one --author argument into several dc:creator elements.
-AUTHOR_SEPARATORS = (";", "|", " and ")
+# Only ";" is used: it is the documented separator and is not part of any
+# ordinary name. Splitting on " and " or "|" would mangle names such as
+# "Procter and Gamble" or a surname containing a pipe.
+AUTHOR_SEPARATORS = (";",)
 
 
 class MetadataError(ValueError):
@@ -68,8 +68,8 @@ def substitute(value: str, filename: Optional[str] = None) -> str:
 def split_authors(value: str) -> List[str]:
     """Split an author argument into individual names.
 
-    Commas are kept because they are common inside names ("Doe, John"), while
-    the separators below unambiguously separate two different people.
+    Commas are kept because they are common inside names ("Doe, John"); the
+    documented ";" separator is the only one that splits two people apart.
     """
     authors = [value]
     for separator in AUTHOR_SEPARATORS:
@@ -166,8 +166,10 @@ def prompt_defaults(existing: Optional[Dict] = None, fallback_title: Optional[st
     return {
         "dc:title": existing.get("dc:title") or fallback_title or DEFAULT_TITLE,
         "dc:creator": existing.get("dc:creator") or DEFAULT_AUTHOR,
-        "dc:identifier": existing.get("dc:identifier")
-        or default_identifier(existing.get("dc:title") or fallback_title or DEFAULT_TITLE),
+        # Left empty when unknown: resolve_metadata derives it from the final
+        # title and file name. Filling it in here would bake in the fallback
+        # title and ignore an --title override.
+        "dc:identifier": existing.get("dc:identifier") or "",
         "dc:language": existing.get("dc:language") or DEFAULT_LANGUAGE,
         "dc:rights": existing.get("dc:rights") or DEFAULT_RIGHTS,
         "dc:publisher": existing.get("dc:publisher") or DEFAULT_PUBLISHER,

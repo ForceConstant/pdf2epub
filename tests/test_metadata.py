@@ -28,11 +28,20 @@ class TestSplitAuthors:
     @pytest.mark.parametrize("value,expected", [
         ("Jane Doe", ["Jane Doe"]),
         ("Jane Doe; John Roe", ["Jane Doe", "John Roe"]),
-        ("Jane Doe | John Roe", ["Jane Doe", "John Roe"]),
-        ("Jane Doe and John Roe", ["Jane Doe", "John Roe"]),
+        ("A;B;C", ["A", "B", "C"]),
     ])
     def test_splits(self, value, expected):
         assert metadata_lib.split_authors(value) == expected
+
+    @pytest.mark.parametrize("value", [
+        "Procter and Gamble",   # company name, one creator
+        "Simon and Schuster",   # publisher, one creator
+        "Jane Doe | John Roe",  # "|" is not a documented separator
+    ])
+    def test_only_semicolon_splits(self, value):
+        # Only ";" is documented, and it cannot appear in an ordinary name.
+        # Splitting on " and " or "|" silently mangled real names.
+        assert metadata_lib.split_authors(value) == [value]
 
     def test_keeps_commas_within_one_name(self):
         # A comma is part of "Doe, Jane", not a separator between people.
@@ -121,6 +130,42 @@ class TestResolveMetadata:
         first = metadata_lib.resolve_metadata({}, fallback_title="a", filename="a.pdf")
         second = metadata_lib.resolve_metadata({}, fallback_title="b", filename="b.pdf")
         assert first["dc:identifier"] != second["dc:identifier"]
+
+    def test_identifier_unique_per_document_with_shared_title(self):
+        # A batch run passing one constant --title must still yield one
+        # identifier per file; only the file name distinguishes them.
+        ids = set()
+        for stem in ("dune", "ubik", "snowcrash"):
+            overrides = metadata_lib.build_metadata({"title": "Report"}, filename=f"{stem}.pdf")
+            resolved = metadata_lib.resolve_metadata(
+                overrides, fallback_title=stem, filename=f"/work/{stem}"
+            )
+            assert resolved["dc:title"] == "Report"
+            ids.add(resolved["dc:identifier"])
+        assert len(ids) == 3
+
+    def test_identifier_uses_override_title(self):
+        # The identifier is seeded from the title that is actually written to
+        # the EPUB, not from the file-name fallback.
+        overrides = metadata_lib.build_metadata({"title": "Dune"}, filename="scan1.pdf")
+        resolved = metadata_lib.resolve_metadata(overrides, fallback_title="scan1", filename="scan1.pdf")
+        expected = metadata_lib.default_identifier("Dune", "scan1.pdf")
+        assert resolved["dc:identifier"] == expected
+
+    def test_prompt_defaults_leaves_identifier_unset(self):
+        # resolve_metadata derives it; deriving it here would ignore --title.
+        defaults = metadata_lib.prompt_defaults({}, fallback_title="scan1")
+        assert defaults["dc:identifier"] == ""
+
+    def test_existing_identifier_is_preserved(self):
+        existing = {"dc:identifier": "urn:isbn:old"}
+        resolved = metadata_lib.resolve_metadata({}, existing=existing, fallback_title="scan1")
+        assert resolved["dc:identifier"] == "urn:isbn:old"
+
+    def test_explicit_identifier_wins(self):
+        overrides = metadata_lib.build_metadata({"identifier": "urn:isbn:12345"}, filename="a.pdf")
+        resolved = metadata_lib.resolve_metadata(overrides, fallback_title="a", filename="a.pdf")
+        assert resolved["dc:identifier"] == "urn:isbn:12345"
 
     def test_identifier_stable_across_runs(self):
         first = metadata_lib.resolve_metadata({}, fallback_title="a", filename="a.pdf")
