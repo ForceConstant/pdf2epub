@@ -163,7 +163,7 @@ def prompt_defaults(existing: Optional[Dict] = None, fallback_title: Optional[st
     """
     existing = existing or {}
 
-    return {
+    defaults = {
         "dc:title": existing.get("dc:title") or fallback_title or DEFAULT_TITLE,
         "dc:creator": existing.get("dc:creator") or DEFAULT_AUTHOR,
         # Left empty when unknown: resolve_metadata derives it from the final
@@ -174,6 +174,14 @@ def prompt_defaults(existing: Optional[Dict] = None, fallback_title: Optional[st
         "dc:rights": existing.get("dc:rights") or DEFAULT_RIGHTS,
         "dc:publisher": existing.get("dc:publisher") or DEFAULT_PUBLISHER,
         "dc:date": existing.get("dc:date") or datetime.now().strftime("%Y-%m-%d"),
+    }
+
+    # A value carried over from description.json may be a list (several
+    # authors, written by an unattended run). Both callers need a string, so
+    # flatten here rather than in each of them.
+    return {
+        key: ", ".join(value) if isinstance(value, list) else value
+        for key, value in defaults.items()
     }
 
 
@@ -198,12 +206,6 @@ def resolve_metadata(
     """
     defaults = prompt_defaults(existing, fallback_title)
     metadata = dict(defaults)
-
-    for key, value in list(metadata.items()):
-        # A value carried over from description.json may be a list (several
-        # authors); flatten it so prompts and XML generation see a string.
-        if isinstance(value, list):
-            metadata[key] = ", ".join(value)
 
     if overrides:
         for key, value in overrides.items():

@@ -21,7 +21,8 @@ def get_user_input(prompt: str, default: str = "") -> str:
     return user_input if user_input else default
 
 def get_metadata_from_user(existing_metadata: Optional[Dict] = None,
-                           fallback_title: Optional[str] = None) -> Dict:
+                           fallback_title: Optional[str] = None,
+                           filename: Optional[str] = None) -> Dict:
     """Interactively collect metadata from user with defaults from existing metadata."""
     if existing_metadata is None:
         existing_metadata = {}
@@ -47,7 +48,8 @@ def get_metadata_from_user(existing_metadata: Optional[Dict] = None,
             # prompt_defaults leaves this empty; derive it from the title the
             # user just settled on so the identifier matches the real title.
             default = metadata_lib.default_identifier(
-                updated_metadata.get("dc:title", "") or fallback_title or ""
+                updated_metadata.get("dc:title", "") or fallback_title or "",
+                filename,
             )
 
         value = get_user_input(prompt, default)
@@ -576,6 +578,7 @@ def main(args, metadata: Optional[Dict] = None):
             json_data = get_metadata_from_user(
                 existing_metadata,
                 fallback_title=Path(work_dir).name,
+                filename=work_dir,
             )
         
         # Find all markdown files if not already in metadata
