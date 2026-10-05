@@ -46,11 +46,12 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      # The metadata tests deliberately avoid the heavy PDF/ML dependencies:
-      # modules/metadata.py has no third-party imports, and main.py's torch
-      # import is stubbed in tests/test_cli.py.
-      - name: Install pytest
-        run: pip install pytest
+      # These tests avoid the heavy ML stack: modules/metadata.py has no
+      # third-party imports, and main.py's torch import is stubbed in
+      # tests/test_cli.py. Pillow, markdown, regex and latex2mathml are still
+      # imported transitively by main.py and are small pure-Python wheels.
+      - name: Install test dependencies
+        run: pip install pytest pillow markdown regex latex2mathml
 
       - name: Run tests
         run: python -m pytest tests/ -q
