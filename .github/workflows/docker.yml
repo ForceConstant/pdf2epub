@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Image version (e.g. 0.2.0 or 0.2.0-rc.1)"
+        description: "Image version (e.g. 0.2.1 or 0.2.1-rc.1)"
         required: true
         type: string
 
@@ -49,7 +49,7 @@ jobs:
           identifier = rf'(?:{number}|[0-9]*[A-Za-z-][0-9A-Za-z-]*)'
           semver = rf'{number}\.{number}\.{number}(?:-{identifier}(?:\.{identifier})*)?'
           if not re.fullmatch(semver, sys.argv[1]):
-              sys.exit('Expected strict semver, e.g. 0.2.0 or 0.2.0-rc.1')
+              sys.exit('Expected strict semver, e.g. 0.2.1 or 0.2.1-rc.1')
           PY
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "name=ghcr.io/${GITHUB_REPOSITORY,,}${IMAGE_SUFFIX}" >> "$GITHUB_OUTPUT"
@@ -91,8 +91,9 @@ jobs:
           docker run --rm --user 1000:1000 --env HOME=/tmp --env TORCH_DEVICE=cpu --entrypoint python \
             "$IMAGE" /app/main.py --help
           if [[ "$VARIANT" == nvidia ]]; then
+            docker run --rm --entrypoint python "$IMAGE" /usr/local/bin/check-cuda-build.py
             docker run --rm --user 1000:1000 --env HOME=/tmp --env TORCH_DEVICE=cpu --entrypoint python \
-              "$IMAGE" -c 'import torch, torchvision; from marker.converters.pdf import PdfConverter; assert torch.version.cuda == "12.8", torch.version.cuda; print(torch.__version__, torchvision.__version__, torch.version.cuda)'
+              "$IMAGE" -c 'import torch, torchvision; from marker.converters.pdf import PdfConverter; assert torch.version.cuda == "12.6", torch.version.cuda; print(torch.__version__, torchvision.__version__, torch.version.cuda)'
             # Assert opt-in behavior: the NVIDIA entrypoint rejects missing GPUs.
             if docker run --rm --user 1000:1000 --env HOME=/tmp "$IMAGE" --help >gpu-check.log 2>&1; then
               echo '::error::NVIDIA entrypoint unexpectedly accepted a run without GPUs'

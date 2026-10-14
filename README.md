@@ -133,28 +133,38 @@ PDF2EPUB_GPU=nvidia ./scripts/pdf2epub.sh ./book.pdf ./output \
   --title "Dune" --author "Frank Herbert"
 ```
 
-This selects `ghcr.io/forceconstant/pdf2epub-nvidia:0.2.0` and adds `--gpus all`.
+This selects `ghcr.io/forceconstant/pdf2epub-nvidia:0.2.1` and adds `--gpus all`.
 Use `PDF2EPUB_IMAGE` to override the image, and `PDF2EPUB_CACHE_DIR` to override
 the model-cache location. An image override alone does not enable GPU passthrough.
 Run the wrapper on the Docker host; its bind mounts refer to that host's paths.
 
 #### NVIDIA image
 
-`Dockerfile.nvidia` packages PyTorch 2.9.1 and torchvision 0.24.1 with CUDA 12.8
+`Dockerfile.nvidia` packages PyTorch 2.9.1 and torchvision 0.24.1 with CUDA 12.6
 runtime libraries. It targets **Linux x86-64** and needs an NVIDIA GPU supported
-by those wheels, a compatible host driver (**570.26 or newer recommended**), and
+by those wheels, a compatible host driver (**560.28.03 or newer recommended**), and
 the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
 configured for Docker. No host CUDA toolkit is required.
+
+The 0.2.1 NVIDIA image includes Pascal kernels (`sm_60`, also compatible with
+`sm_61` cards such as the GTX 1060) through Hopper. The 0.2.0 CUDA 12.8 image
+omitted Pascal, causing `no kernel image is available` on GTX 10-series cards.
+Blackwell GPUs need the CUDA 12.8 image instead: set
+`PDF2EPUB_IMAGE=ghcr.io/forceconstant/pdf2epub-nvidia:0.2.0` with
+`PDF2EPUB_GPU=nvidia`. Do not select that older image for Pascal.
+
+Architecture support does not guarantee enough VRAM for conversion; the GTX
+1060 3GB may still run out of GPU memory when loading/processing the models.
 
 Build locally or pull the published package:
 
 ```bash
 docker build -f Dockerfile.nvidia -t pdf2epub-nvidia .
-docker pull ghcr.io/forceconstant/pdf2epub-nvidia:0.2.0
+docker pull ghcr.io/forceconstant/pdf2epub-nvidia:0.2.1
 docker run --rm --gpus all \
   -v "$(pwd)":/data \
   -v pdf2epub-models:/models \
-  ghcr.io/forceconstant/pdf2epub-nvidia:0.2.0 input.pdf --yes
+  ghcr.io/forceconstant/pdf2epub-nvidia:0.2.1 input.pdf --yes
 ```
 
 The NVIDIA entrypoint verifies CUDA availability and executes a small GPU kernel
@@ -163,11 +173,11 @@ Check access without downloading models:
 
 ```bash
 docker run --rm --gpus all --entrypoint python \
-  ghcr.io/forceconstant/pdf2epub-nvidia:0.2.0 \
+  ghcr.io/forceconstant/pdf2epub-nvidia:0.2.1 \
   -c 'import torch; print(torch.cuda.get_device_name(0)); print(torch.ones(1, device="cuda").sum().item())'
 ```
 
-Release CI checks dependency consistency, CUDA-enabled wheels, CLI startup and
+Release CI checks dependency consistency, CUDA-enabled wheels with Pascal kernels, CLI startup and
 the missing-GPU error before publishing. GitHub-hosted runners have no NVIDIA
 GPU, so those checks do **not** verify real GPU conversion or VRAM requirements.
 

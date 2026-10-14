@@ -46,7 +46,7 @@ def test_standard_mode_remains_opt_in(launch):
     assert result.returncode == 0, result.stderr
     assert argv[:3] == ["run", "--rm", "--init"]
     assert "--gpus" not in argv
-    assert argv[-4:] == ["ghcr.io/forceconstant/pdf2epub:0.2.0",
+    assert argv[-4:] == ["ghcr.io/forceconstant/pdf2epub:0.2.1",
                          "/input/A book.pdf", "/output", "--yes"]
 
 
@@ -56,7 +56,7 @@ def test_nvidia_selects_package_and_preserves_metadata(launch):
     assert result.returncode == 0, result.stderr
     index = argv.index("--gpus")
     assert argv[index + 1] == "all"
-    assert argv[-8:] == ["ghcr.io/forceconstant/pdf2epub-nvidia:0.2.0",
+    assert argv[-8:] == ["ghcr.io/forceconstant/pdf2epub-nvidia:0.2.1",
                          "/input/A book.pdf", "/output", "--yes", "--title",
                          "A book; $(literal)", "--author", "{stem}"]
 

@@ -20,8 +20,8 @@ Examples:
 
 Environment overrides:
   PDF2EPUB_GPU        none (default) or nvidia (adds --gpus all)
-  PDF2EPUB_IMAGE      Default: ghcr.io/forceconstant/pdf2epub:0.2.0
-                     With nvidia: ghcr.io/forceconstant/pdf2epub-nvidia:0.2.0
+  PDF2EPUB_IMAGE      Default: ghcr.io/forceconstant/pdf2epub:0.2.1
+                     With nvidia: ghcr.io/forceconstant/pdf2epub-nvidia:0.2.1
   PDF2EPUB_CACHE_DIR  Default: ${XDG_CACHE_HOME:-$HOME/.cache}/pdf2epub
 
 Requires Bash and Docker. Run on the machine hosting your Docker daemon;
@@ -60,9 +60,9 @@ fi
 
 gpu_args=()
 case ${PDF2EPUB_GPU:-none} in
-  none) default_image=ghcr.io/forceconstant/pdf2epub:0.2.0 ;;
+  none) default_image=ghcr.io/forceconstant/pdf2epub:0.2.1 ;;
   nvidia)
-    default_image=ghcr.io/forceconstant/pdf2epub-nvidia:0.2.0
+    default_image=ghcr.io/forceconstant/pdf2epub-nvidia:0.2.1
     gpu_args=(--gpus all)
     ;;
   *) fail 'PDF2EPUB_GPU must be none or nvidia.' ;;
