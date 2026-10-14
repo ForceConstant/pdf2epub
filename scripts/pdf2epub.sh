@@ -18,8 +18,14 @@ Examples:
   pdf2epub.sh ./book.pdf --skip-epub
 
 Environment overrides:
-  PDF2EPUB_IMAGE      Default: ghcr.io/forceconstant/pdf2epub:0.1.0
+  PDF2EPUB_IMAGE      Default: ghcr.io/forceconstant/pdf2epub:latest
   PDF2EPUB_CACHE_DIR  Default: ${XDG_CACHE_HOME:-$HOME/.cache}/pdf2epub
+
+Vision-model path (hosted page transcription; use the CLI flag --vlm):
+  PDF2EPUB_VLM_MODEL, PDF2EPUB_VLM_BASE_URL, PDF2EPUB_VLM_API_KEY
+  PDF2EPUB_VLM_MAX_TOKENS, PDF2EPUB_VLM_DPI, PDF2EPUB_VLM_CONCURRENCY,
+  PDF2EPUB_VLM_MAX_RETRIES, PDF2EPUB_VLM_TIMEOUT, PDF2EPUB_VLM_MAX_PIXELS
+  COMMANDCODE_TOKEN is also forwarded as an API-key fallback.
 
 Requires Bash and Docker. Run on the machine hosting your Docker daemon;
 input, output, and cache paths are bind-mounted from that machine.
@@ -54,7 +60,14 @@ else
   fail "Input file or directory does not exist: $input"
 fi
 
-image=${PDF2EPUB_IMAGE:-ghcr.io/forceconstant/pdf2epub:0.1.0}
+image=${PDF2EPUB_IMAGE:-ghcr.io/forceconstant/pdf2epub:latest}
+vlm_args=()
+for name in PDF2EPUB_VLM PDF2EPUB_VLM_MODEL PDF2EPUB_VLM_BASE_URL \
+  PDF2EPUB_VLM_API_KEY PDF2EPUB_VLM_MAX_TOKENS PDF2EPUB_VLM_DPI \
+  PDF2EPUB_VLM_CONCURRENCY PDF2EPUB_VLM_MAX_RETRIES PDF2EPUB_VLM_TIMEOUT \
+  PDF2EPUB_VLM_MAX_PIXELS COMMANDCODE_TOKEN; do
+  if [[ -v $name ]]; then vlm_args+=(--env "$name=${!name}"); fi
+done
 cache=${PDF2EPUB_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/pdf2epub}
 mkdir -p -- "$output" "$cache"
 output_mount=$(cd -- "$output" && pwd -P)
@@ -68,7 +81,8 @@ printf 'Image: %s\nOutput: %s\nModel cache: %s\n' \
 # Arrays/quoted arguments preserve spaces, semicolons, and literal placeholders.
 # Use your UID/GID so generated files are not owned by root.
 # No -it: --yes intentionally makes metadata generation non-interactive.
-exec docker run --rm --init \
+exec docker run --rm --init --pull=always \
+  "${vlm_args[@]}" \
   --user "$(id -u):$(id -g)" \
   --volume "$input_mount:/input:ro" \
   --volume "$output_mount:/output" \

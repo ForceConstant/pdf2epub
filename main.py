@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 import argparse
+import os
 import sys
 from pathlib import Path
 import modules.pdf2md as pdf2md
 import modules.mark2epub as mark2epub
 import modules.metadata as metadata_lib
+import modules.vlm as vlm_lib
 import torch
 
 
@@ -133,6 +135,15 @@ def main():
         help='Skip markdown generation, use existing markdown files'
     )
     parser.add_argument(
+        '--vlm',
+        action='store_true',
+        help='Transcribe pages with a hosted vision model instead of local models'
+    )
+    parser.add_argument('--vlm-model', type=str, default=None,
+                        help='Vision model id for --vlm')
+    parser.add_argument('--vlm-dpi', type=int, default=None,
+                        help='Page render DPI for --vlm')
+    parser.add_argument(
         '-y', '--yes',
         action='store_true',
         help='Accept the default EPUB metadata instead of prompting for it'
@@ -140,6 +151,17 @@ def main():
     add_metadata_arguments(parser)
 
     args = parser.parse_args()
+
+    if args.vlm:
+        os.environ['PDF2EPUB_VLM'] = '1'
+    if args.vlm_model:
+        os.environ['PDF2EPUB_VLM_MODEL'] = args.vlm_model
+    if args.vlm_dpi:
+        os.environ['PDF2EPUB_VLM_DPI'] = str(args.vlm_dpi)
+    try:
+        vlm_config = vlm_lib.read_vlm_config()
+    except vlm_lib.VlmError as exc:
+        parser.error(str(exc))
 
     metadata_args = collect_metadata_args(args)
 
@@ -199,13 +221,18 @@ def main():
                 
             # Convert PDF to Markdown unless skipped
             if not args.skip_md:
-                print("Converting PDF to Markdown...")
-                pdf2md.convert_pdf(
-                    str(pdf_path),
-                    markdown_dir,
-                    args.max_pages,
-                    args.start_page,
-                )
+                if vlm_config:
+                    print("Converting PDF to Markdown with the vision model...")
+                    vlm_lib.convert_pdf_vlm(
+                        str(pdf_path), markdown_dir, args.max_pages,
+                        args.start_page, config=vlm_config,
+                    )
+                else:
+                    print("Converting PDF to Markdown...")
+                    pdf2md.convert_pdf(
+                        str(pdf_path), markdown_dir, args.max_pages,
+                        args.start_page,
+                    )
             
             # Convert Markdown to EPUB unless skipped
             if not args.skip_epub:

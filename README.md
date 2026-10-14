@@ -295,3 +295,21 @@ This project builds upon several excellent open-source libraries:
 - [mark2epub](https://github.com/AlexPof/mark2epub) for markdown conversion
 - [PyTorch](https://pytorch.org/) for GPU acceleration
 - [Transformers](https://huggingface.co/transformers) for advanced text processing
+
+## Hosted vision-model conversion (`--vlm`)
+
+The opt-in VLM path transcribes PDF pages with a hosted multimodal model instead
+of running local layout/OCR models. It needs a CommandCode token and internet
+access; the API key is passed into the local Docker container as an environment
+variable. Set `PDF2EPUB_VLM_API_KEY` or `COMMANDCODE_TOKEN`, then run:
+
+```bash
+export PDF2EPUB_VLM_API_KEY=...
+export PDF2EPUB_VLM_MAX_TOKENS=16384
+export PDF2EPUB_VLM_CONCURRENCY=8
+./scripts/pdf2epub.sh ./issue.pdf ./output --vlm --title '{stem}'
+```
+
+The default model is `deepseek/deepseek-v4.1-flash`. On a dense 8-page test,
+concurrency 8 completed in 117 seconds at about $0.003 per page. This path does
+not extract figures, and complex tables depend on the model's Markdown output.
