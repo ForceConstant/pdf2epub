@@ -37,7 +37,7 @@ jobs:
 
       - name: Verify image before publishing
         env:
-          IMAGE: ghcr.io/${{ github.repository }}:${{ steps.meta.outputs.version }}
+          IMAGE: ghcr.io/forceconstant/pdf2epub:${{ steps.meta.outputs.version }}
         run: |
           docker run --rm --entrypoint python "$IMAGE" -m pip check
           docker run --rm --entrypoint python "$IMAGE" /app/main.py --help
