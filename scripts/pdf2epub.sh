@@ -20,9 +20,16 @@ Examples:
 
 Environment overrides:
   PDF2EPUB_GPU        none (default) or nvidia (adds --gpus all)
-  PDF2EPUB_IMAGE      Default: ghcr.io/forceconstant/pdf2epub:0.2.1
-                     With nvidia: ghcr.io/forceconstant/pdf2epub-nvidia:0.2.1
+  PDF2EPUB_IMAGE      Default: ghcr.io/forceconstant/pdf2epub:0.2.2
+                     With nvidia: ghcr.io/forceconstant/pdf2epub-nvidia:0.2.2
   PDF2EPUB_CACHE_DIR  Default: ${XDG_CACHE_HOME:-$HOME/.cache}/pdf2epub
+  PDF2EPUB_BATCH_SIZE Global batch size; unset preserves converter defaults
+  PDF2EPUB_{LAYOUT,RECOGNITION,DETECTION,TABLE,EQUATION,OCR_ERROR}_BATCH_SIZE
+                     Per-stage positive integer; overrides global batch size
+  PDF2EPUB_MODEL_DEVICE  auto (default), cpu, cuda, or mps
+  PDF2EPUB_{LAYOUT,RECOGNITION,DETECTION,TABLE,OCR_ERROR}_DEVICE
+                     Per-model device; overrides global model device
+  PYTORCH_ALLOC_CONF / PYTORCH_CUDA_ALLOC_CONF  Optional allocator settings
 
 Requires Bash and Docker. Run on the machine hosting your Docker daemon;
 input, output, and cache paths are bind-mounted from that machine.
@@ -60,14 +67,25 @@ fi
 
 gpu_args=()
 case ${PDF2EPUB_GPU:-none} in
-  none) default_image=ghcr.io/forceconstant/pdf2epub:0.2.1 ;;
+  none) default_image=ghcr.io/forceconstant/pdf2epub:0.2.2 ;;
   nvidia)
-    default_image=ghcr.io/forceconstant/pdf2epub-nvidia:0.2.1
+    default_image=ghcr.io/forceconstant/pdf2epub-nvidia:0.2.2
     gpu_args=(--gpus all)
     ;;
   *) fail 'PDF2EPUB_GPU must be none or nvidia.' ;;
 esac
 image=${PDF2EPUB_IMAGE:-$default_image}
+# Only forward documented tuning variables; arrays keep values literal.
+tuning_args=()
+for name in PDF2EPUB_BATCH_SIZE PDF2EPUB_MODEL_DEVICE \
+  PDF2EPUB_LAYOUT_BATCH_SIZE PDF2EPUB_RECOGNITION_BATCH_SIZE \
+  PDF2EPUB_DETECTION_BATCH_SIZE PDF2EPUB_TABLE_BATCH_SIZE \
+  PDF2EPUB_EQUATION_BATCH_SIZE PDF2EPUB_OCR_ERROR_BATCH_SIZE \
+  PDF2EPUB_LAYOUT_DEVICE PDF2EPUB_RECOGNITION_DEVICE PDF2EPUB_DETECTION_DEVICE \
+  PDF2EPUB_TABLE_DEVICE PDF2EPUB_OCR_ERROR_DEVICE \
+  PYTORCH_ALLOC_CONF PYTORCH_CUDA_ALLOC_CONF; do
+  if [[ -v $name ]]; then tuning_args+=(--env "$name=${!name}"); fi
+done
 cache=${PDF2EPUB_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/pdf2epub}
 mkdir -p -- "$output" "$cache"
 output_mount=$(cd -- "$output" && pwd -P)
@@ -83,6 +101,7 @@ printf 'Image: %s\nOutput: %s\nModel cache: %s\n' \
 # No -it: --yes intentionally makes metadata generation non-interactive.
 exec docker run --rm --init \
   "${gpu_args[@]}" \
+  "${tuning_args[@]}" \
   --user "$(id -u):$(id -g)" \
   --volume "$input_mount:/input:ro" \
   --volume "$output_mount:/output" \

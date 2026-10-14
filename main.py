@@ -6,6 +6,7 @@ import modules.pdf2md as pdf2md
 import modules.mark2epub as mark2epub
 import modules.metadata as metadata_lib
 import torch
+from modules.tuning import read_tuning
 
 
 def add_metadata_arguments(parser: argparse.ArgumentParser) -> None:
@@ -140,6 +141,12 @@ def main():
     add_metadata_arguments(parser)
 
     args = parser.parse_args()
+
+    # Reject mistyped tuning before downloads or per-file conversion work.
+    try:
+        read_tuning()
+    except ValueError as exc:
+        parser.error(str(exc))
 
     metadata_args = collect_metadata_args(args)
 

@@ -9,6 +9,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY main.py .
 COPY modules/ modules/
+COPY docker/check-tuning.py /usr/local/bin/check-tuning.py
 
 # marker-pdf downloads its models on first run; mount a volume at this path
 # to cache them across container runs.

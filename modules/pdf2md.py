@@ -3,6 +3,7 @@ import sys
 import json
 from PIL import Image
 import io
+from modules.tuning import read_tuning, create_tuned_models
 
 def get_default_output_dir(input_path: Path) -> Path:
     """
@@ -84,16 +85,19 @@ def convert_pdf(
     Convert a single PDF file to markdown format with enhanced image handling.
     """
     try:
-        from marker.models import create_model_dict
+        config, devices = read_tuning()
         from marker.converters.pdf import PdfConverter
 
-        models = create_model_dict()
+        if config:
+            print(f"Batch overrides: {config}", flush=True)
+        print("Loading conversion models...", flush=True)
+        models = create_tuned_models(devices)
+        print("Conversion models loaded.", flush=True)
 
         # Build page_range config. marker-pdf 1.x requires an explicit list of
         # page indices; there is no "start to end" shorthand. If start_page is
         # given without max_pages we cannot construct the range without knowing
         # the document's page count, so we warn and process all pages instead.
-        config = {}
         if max_pages is not None:
             s = start_page or 0
             config["page_range"] = list(range(s, s + max_pages))

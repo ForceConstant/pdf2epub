@@ -133,10 +133,63 @@ PDF2EPUB_GPU=nvidia ./scripts/pdf2epub.sh ./book.pdf ./output \
   --title "Dune" --author "Frank Herbert"
 ```
 
-This selects `ghcr.io/forceconstant/pdf2epub-nvidia:0.2.1` and adds `--gpus all`.
+This selects `ghcr.io/forceconstant/pdf2epub-nvidia:0.2.2` and adds `--gpus all`.
 Use `PDF2EPUB_IMAGE` to override the image, and `PDF2EPUB_CACHE_DIR` to override
 the model-cache location. An image override alone does not enable GPU passthrough.
 Run the wrapper on the Docker host; its bind mounts refer to that host's paths.
+
+#### Memory tuning (0.2.2 and newer)
+
+Set/export these variables in your final run script. The updated launcher
+forwards them into the container; with plain `docker run`, pass them using `-e`.
+Unset or empty values preserve the converter's defaults.
+
+- `PDF2EPUB_BATCH_SIZE`: positive integer applied to all six processing stages.
+- Per-stage overrides (also positive integers): `PDF2EPUB_LAYOUT_BATCH_SIZE`,
+  `PDF2EPUB_RECOGNITION_BATCH_SIZE`, `PDF2EPUB_DETECTION_BATCH_SIZE`,
+  `PDF2EPUB_TABLE_BATCH_SIZE`, `PDF2EPUB_EQUATION_BATCH_SIZE`,
+  `PDF2EPUB_OCR_ERROR_BATCH_SIZE`. A stage value wins over the global value.
+- `PDF2EPUB_MODEL_DEVICE`: `auto` (default), `cpu`, `cuda`, or `mps` for all models.
+- Per-model overrides: `PDF2EPUB_LAYOUT_DEVICE`, `PDF2EPUB_RECOGNITION_DEVICE`,
+  `PDF2EPUB_DETECTION_DEVICE`, `PDF2EPUB_TABLE_DEVICE`, `PDF2EPUB_OCR_ERROR_DEVICE`.
+  Each accepts the same device values; an explicit `auto` restores upstream
+  automatic device selection for that model, even when the global value is set.
+  Equations share the recognition model, so use `PDF2EPUB_RECOGNITION_DEVICE`.
+- `PYTORCH_ALLOC_CONF` and legacy `PYTORCH_CUDA_ALLOC_CONF` are forwarded unchanged
+  for optional PyTorch allocator tuning. They do not create more VRAM.
+
+Start with batches of one on a small GPU:
+
+```bash
+export PDF2EPUB_GPU=nvidia
+export PDF2EPUB_IMAGE=ghcr.io/forceconstant/pdf2epub-nvidia:0.2.2
+export PDF2EPUB_BATCH_SIZE=1
+./scripts/pdf2epub.sh ./book.pdf ./output --title '{stem}'
+```
+
+Increase individual batches after a successful conversion to trade VRAM for
+throughput, e.g. `export PDF2EPUB_RECOGNITION_BATCH_SIZE=2`.
+These are **Marker's** batch overrides, not just Surya environment settings;
+Marker otherwise passes its own defaults to Surya (including layout 12 and
+recognition 48 on CUDA).
+
+If it runs out of memory while **loading models**, batches cannot shrink the
+model weights. Load selected models directly on CPU instead:
+
+```bash
+export PDF2EPUB_TABLE_DEVICE=cpu
+export PDF2EPUB_OCR_ERROR_DEVICE=cpu
+# For a larger reduction, move recognition/OCR/equations onto CPU as well:
+# export PDF2EPUB_RECOGNITION_DEVICE=cpu
+```
+
+Other models keep their automatic GPU placement. CPU-selected models are loaded
+directly on CPU in float32, not loaded on CUDA and moved afterward. This uses
+more system RAM and may reduce speed; it does not disable those processing steps.
+Device overrides do not provide passthrough or install missing GPU backends.
+Batch/model-loading phase messages identify where a future failure occurs.
+Neither batch tuning nor partial CPU offload has been tested on a physical GTX
+1060 here; another application's GPU use can still limit available VRAM.
 
 #### NVIDIA image
 
@@ -160,11 +213,11 @@ Build locally or pull the published package:
 
 ```bash
 docker build -f Dockerfile.nvidia -t pdf2epub-nvidia .
-docker pull ghcr.io/forceconstant/pdf2epub-nvidia:0.2.1
+docker pull ghcr.io/forceconstant/pdf2epub-nvidia:0.2.2
 docker run --rm --gpus all \
   -v "$(pwd)":/data \
   -v pdf2epub-models:/models \
-  ghcr.io/forceconstant/pdf2epub-nvidia:0.2.1 input.pdf --yes
+  ghcr.io/forceconstant/pdf2epub-nvidia:0.2.2 input.pdf --yes
 ```
 
 The NVIDIA entrypoint verifies CUDA availability and executes a small GPU kernel
@@ -173,7 +226,7 @@ Check access without downloading models:
 
 ```bash
 docker run --rm --gpus all --entrypoint python \
-  ghcr.io/forceconstant/pdf2epub-nvidia:0.2.1 \
+  ghcr.io/forceconstant/pdf2epub-nvidia:0.2.2 \
   -c 'import torch; print(torch.cuda.get_device_name(0)); print(torch.ones(1, device="cuda").sum().item())'
 ```
 
