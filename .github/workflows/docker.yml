@@ -42,6 +42,7 @@ jobs:
           docker run --rm --entrypoint python "$IMAGE" -m pip check
           docker run --rm --entrypoint python "$IMAGE" /app/main.py --help
           docker run --rm --entrypoint python \
+            --env PYTHONPATH=/app \
             --env PDF2EPUB_VLM=1 --env PDF2EPUB_VLM_API_KEY=workflow-check \
             "$IMAGE" -c 'import pypdfium2; from modules.vlm import read_vlm_config; assert read_vlm_config()["model"] == "deepseek/deepseek-v4.1-flash"'
 
