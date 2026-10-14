@@ -21,6 +21,14 @@ MODEL_SETTINGS = {
 }
 
 
+def read_offload(environ=None):
+    env = os.environ if environ is None else environ
+    value = env.get("PDF2EPUB_MODEL_OFFLOAD", "")
+    if value not in {"", "0", "1"}:
+        raise ValueError("PDF2EPUB_MODEL_OFFLOAD must be 0 or 1")
+    return value == "1"
+
+
 def read_tuning(environ=None):
     """Return validated (converter config, model devices) before loading models.
 
@@ -28,6 +36,7 @@ def read_tuning(environ=None):
     an explicit per-model 'auto' restores marker's default device for that model.
     """
     env = os.environ if environ is None else environ
+    read_offload(env)
     config, devices = {}, {}
 
     def batch(name):
@@ -62,7 +71,7 @@ def read_tuning(environ=None):
     return config, devices
 
 
-def create_tuned_models(devices):
+def create_tuned_models(devices, offload=False):
     """Load directly onto selected devices, never all on CUDA then offload.
 
     Mirrors marker-pdf 1.10.2's five-model factory only when overrides exist.
@@ -70,6 +79,10 @@ def create_tuned_models(devices):
     select CUDA-oriented dtypes even for a predictor loaded on CPU.
     """
     from marker import models as factory
+
+    if offload:
+        from modules.offload import create_offloaded_models
+        return create_offloaded_models(factory, devices)
 
     if not devices:
         return factory.create_model_dict()

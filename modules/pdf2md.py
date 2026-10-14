@@ -3,7 +3,7 @@ import sys
 import json
 from PIL import Image
 import io
-from modules.tuning import read_tuning, create_tuned_models
+from modules.tuning import read_tuning, read_offload, create_tuned_models
 
 def get_default_output_dir(input_path: Path) -> Path:
     """
@@ -90,9 +90,13 @@ def convert_pdf(
 
         if config:
             print(f"Batch overrides: {config}", flush=True)
-        print("Loading conversion models...", flush=True)
-        models = create_tuned_models(devices)
-        print("Conversion models loaded.", flush=True)
+        if read_offload():
+            models = create_tuned_models(devices, offload=True)
+            print("Model offload enabled: lazy CPU loading, CUDA only during inference.", flush=True)
+        else:
+            print("Loading conversion models...", flush=True)
+            models = create_tuned_models(devices)
+            print("Conversion models loaded.", flush=True)
 
         # Build page_range config. marker-pdf 1.x requires an explicit list of
         # page indices; there is no "start to end" shorthand. If start_page is

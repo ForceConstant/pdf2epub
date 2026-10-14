@@ -133,7 +133,10 @@ PDF2EPUB_GPU=nvidia ./scripts/pdf2epub.sh ./book.pdf ./output \
   --title "Dune" --author "Frank Herbert"
 ```
 
-This selects `ghcr.io/forceconstant/pdf2epub-nvidia:0.2.2` and adds `--gpus all`.
+This selects `ghcr.io/forceconstant/pdf2epub-nvidia:latest` and adds `--gpus all`.
+The launcher checks the registry on every run (`--pull=always`); unchanged
+layers are reused. Set `PDF2EPUB_IMAGE` to pin a version if desired. Moving the
+`latest` tag does not automatically remove older local images.
 Use `PDF2EPUB_IMAGE` to override the image, and `PDF2EPUB_CACHE_DIR` to override
 the model-cache location. An image override alone does not enable GPU passthrough.
 Run the wrapper on the Docker host; its bind mounts refer to that host's paths.
@@ -157,13 +160,24 @@ Unset or empty values preserve the converter's defaults.
   Equations share the recognition model, so use `PDF2EPUB_RECOGNITION_DEVICE`.
 - `PYTORCH_ALLOC_CONF` and legacy `PYTORCH_CUDA_ALLOC_CONF` are forwarded unchanged
   for optional PyTorch allocator tuning. They do not create more VRAM.
+- `PDF2EPUB_MODEL_OFFLOAD` (0.2.3+): `1` enables on-demand model loading and
+  CUDA swapping; `0`, unset, or empty keeps the original resident-model behavior.
+  Models are constructed on CPU only when used, transferred to CUDA for their
+  inference call, then returned to RAM. Auxiliary token tensors follow the
+  weights, and decoder caches are released even after an inference/transfer
+  error. Reused models are kept in RAM rather than re-downloaded/reloaded.
+  Only CPU/CUDA targets are supported in this mode; Surya compilation must be
+  disabled. Existing device overrides still apply: CPU-selected models never
+  move to CUDA. It needs system RAM for the used models and trades transfer time
+  for reduced VRAM. A single model plus its working tensors must still fit.
 
 Start with batches of one on a small GPU:
 
 ```bash
 export PDF2EPUB_GPU=nvidia
-export PDF2EPUB_IMAGE=ghcr.io/forceconstant/pdf2epub-nvidia:0.2.2
+export PDF2EPUB_IMAGE=ghcr.io/forceconstant/pdf2epub-nvidia:latest
 export PDF2EPUB_BATCH_SIZE=1
+export PDF2EPUB_MODEL_OFFLOAD=1
 ./scripts/pdf2epub.sh ./book.pdf ./output --title '{stem}'
 ```
 
@@ -173,8 +187,9 @@ These are **Marker's** batch overrides, not just Surya environment settings;
 Marker otherwise passes its own defaults to Surya (including layout 12 and
 recognition 48 on CUDA).
 
-If it runs out of memory while **loading models**, batches cannot shrink the
-model weights. Load selected models directly on CPU instead:
+Without offload enabled, all models are loaded before processing. Batches cannot
+shrink model weights. Enable offload above to avoid simultaneous CUDA residency.
+If even one model/working batch still exhausts VRAM, run that model on CPU:
 
 ```bash
 export PDF2EPUB_TABLE_DEVICE=cpu
@@ -213,11 +228,11 @@ Build locally or pull the published package:
 
 ```bash
 docker build -f Dockerfile.nvidia -t pdf2epub-nvidia .
-docker pull ghcr.io/forceconstant/pdf2epub-nvidia:0.2.2
+docker pull ghcr.io/forceconstant/pdf2epub-nvidia:0.2.3
 docker run --rm --gpus all \
   -v "$(pwd)":/data \
   -v pdf2epub-models:/models \
-  ghcr.io/forceconstant/pdf2epub-nvidia:0.2.2 input.pdf --yes
+  ghcr.io/forceconstant/pdf2epub-nvidia:0.2.3 input.pdf --yes
 ```
 
 The NVIDIA entrypoint verifies CUDA availability and executes a small GPU kernel
@@ -226,7 +241,7 @@ Check access without downloading models:
 
 ```bash
 docker run --rm --gpus all --entrypoint python \
-  ghcr.io/forceconstant/pdf2epub-nvidia:0.2.2 \
+  ghcr.io/forceconstant/pdf2epub-nvidia:0.2.3 \
   -c 'import torch; print(torch.cuda.get_device_name(0)); print(torch.ones(1, device="cuda").sum().item())'
 ```
 

@@ -22,6 +22,7 @@ RUN printf 'torch==2.9.1+cu126\ntorchvision==0.24.1+cu126\n' > /tmp/cuda-constra
 COPY main.py .
 COPY modules/ modules/
 COPY docker/check-tuning.py /usr/local/bin/check-tuning.py
+COPY docker/check-offload.py /usr/local/bin/check-offload.py
 COPY docker/nvidia-entrypoint.sh /usr/local/bin/pdf2epub-nvidia
 RUN chmod +x /usr/local/bin/pdf2epub-nvidia
 

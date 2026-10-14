@@ -92,6 +92,8 @@ jobs:
             "$IMAGE" /app/main.py --help
           docker run --rm --user 1000:1000 --env HOME=/tmp --env TORCH_DEVICE=cpu --entrypoint python \
             "$IMAGE" /usr/local/bin/check-tuning.py
+          docker run --rm --user 1000:1000 --env HOME=/tmp --env TORCH_DEVICE=cpu --entrypoint python \
+            "$IMAGE" /usr/local/bin/check-offload.py
           if [[ "$VARIANT" == nvidia ]]; then
             docker run --rm --entrypoint python "$IMAGE" /usr/local/bin/check-cuda-build.py
             docker run --rm --user 1000:1000 --env HOME=/tmp --env TORCH_DEVICE=cpu --entrypoint python \
@@ -130,6 +132,7 @@ jobs:
             echo "$IMAGE_TAGS"
             echo '```'
             echo 'Dependency consistency and CLI startup passed before publication.'
+            echo 'Lazy offload, tensor and cache checks passed using real Surya classes and tiny CPU models.'
             echo 'NVIDIA checks verify CUDA wheels and rejection without a GPU, not real GPU conversion.'
             echo 'A new GHCR package may require its owner to enable public visibility; verify anonymous pullability.'
           } >> "$GITHUB_STEP_SUMMARY"

@@ -63,7 +63,8 @@ def test_invalid_device_is_rejected():
 
 
 @pytest.mark.parametrize("name,value", [("PDF2EPUB_BATCH_SIZE", "0"),
-                                       ("PDF2EPUB_TABLE_DEVICE", "gpu")])
+                                       ("PDF2EPUB_TABLE_DEVICE", "gpu"),
+                                       ("PDF2EPUB_MODEL_OFFLOAD", "true")])
 def test_cli_rejects_bad_tuning_before_reading_inputs(monkeypatch, capsys, name, value):
     import main as cli
     monkeypatch.setenv(name, value)

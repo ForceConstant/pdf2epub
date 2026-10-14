@@ -46,8 +46,9 @@ def test_standard_mode_remains_opt_in(launch):
     result, argv = launch()
     assert result.returncode == 0, result.stderr
     assert argv[:3] == ["run", "--rm", "--init"]
+    assert "--pull=always" in argv
     assert "--gpus" not in argv
-    assert argv[-4:] == ["ghcr.io/forceconstant/pdf2epub:0.2.2",
+    assert argv[-4:] == ["ghcr.io/forceconstant/pdf2epub:latest",
                          "/input/A book.pdf", "/output", "--yes"]
 
 
@@ -55,9 +56,10 @@ def test_nvidia_selects_package_and_preserves_metadata(launch):
     result, argv = launch("converted books", "--title", "A book; $(literal)",
                           "--author", "{stem}", PDF2EPUB_GPU="nvidia")
     assert result.returncode == 0, result.stderr
+    assert "--pull=always" in argv
     index = argv.index("--gpus")
     assert argv[index + 1] == "all"
-    assert argv[-8:] == ["ghcr.io/forceconstant/pdf2epub-nvidia:0.2.2",
+    assert argv[-8:] == ["ghcr.io/forceconstant/pdf2epub-nvidia:latest",
                          "/input/A book.pdf", "/output", "--yes", "--title",
                          "A book; $(literal)", "--author", "{stem}"]
 
@@ -72,6 +74,7 @@ def test_nvidia_allows_image_override(launch):
 def test_image_override_does_not_expose_gpu(launch):
     result, argv = launch(PDF2EPUB_IMAGE="custom:cuda")
     assert result.returncode == 0, result.stderr
+    assert "--pull=always" in argv
     assert "--gpus" not in argv
 
 
@@ -89,6 +92,7 @@ def test_docker_failure_propagates(launch):
 
 def test_tuning_is_forwarded_literally_before_image(launch):
     settings = {
+        "PDF2EPUB_MODEL_OFFLOAD": "1",
         "PDF2EPUB_BATCH_SIZE": "1", "PDF2EPUB_MODEL_DEVICE": "auto",
         "PDF2EPUB_RECOGNITION_BATCH_SIZE": "2", "PDF2EPUB_TABLE_DEVICE": "cpu",
         "PYTORCH_CUDA_ALLOC_CONF": "max_split_size_mb:64; $(literal)",
@@ -96,7 +100,7 @@ def test_tuning_is_forwarded_literally_before_image(launch):
     }
     result, argv = launch(PDF2EPUB_GPU="nvidia", **settings)
     assert result.returncode == 0, result.stderr
-    image_index = argv.index("ghcr.io/forceconstant/pdf2epub-nvidia:0.2.2")
+    image_index = argv.index("ghcr.io/forceconstant/pdf2epub-nvidia:latest")
     for name, value in settings.items():
         token = f"{name}={value}"
         if name == "PDF2EPUB_UNKNOWN":
