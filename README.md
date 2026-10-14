@@ -206,6 +206,39 @@ Batch/model-loading phase messages identify where a future failure occurs.
 Neither batch tuning nor partial CPU offload has been tested on a physical GTX
 1060 here; another application's GPU use can still limit available VRAM.
 
+#### Vision-model path (`--vlm`)
+
+When the local models are the bottleneck, pages can be transcribed by a hosted
+multimodal model instead. This replaces the layout-detection and OCR stages with
+one API call per page; the resulting Markdown is assembled into the EPUB by the
+same code path (`mark2epub`), so output structure is unchanged.
+
+```bash
+export PDF2EPUB_VLM_API_KEY=...   # or COMMANDCODE_TOKEN
+export PDF2EPUB_VLM_MAX_TOKENS=16384
+export PDF2EPUB_VLM_CONCURRENCY=8
+./scripts/pdf2epub.sh ./book.pdf ./output --vlm --title 'Dune'
+```
+
+CLI flags: `--vlm`, `--vlm-model`, `--vlm-dpi`. The `PDF2EPUB_VLM_*` variables
+above cover the rest. Default model is `deepseek/deepseek-v4.1-flash` through
+CommandCode's OpenAI-compatible endpoint.
+
+What to expect (measured on the GTX 1060 box, 2 dense magazine pages):
+
+- 90 s end-to-end at concurrency 4. The work is API-bound, so raising
+  `PDF2EPUB_VLM_CONCURRENCY` scales throughput — local CPU/GPU speed is
+  irrelevant on this path.
+- Reasoning models spend part of `max_tokens` on hidden reasoning, so a dense
+  page can return nothing at 8192. Raise `PDF2EPUB_VLM_MAX_TOKENS` if you see
+  "model hit the token limit".
+- Quality trade-off: strong on stylized covers and prose, and it keeps reading
+  order that the local layout model fragments. There is no table-structure model
+  here, so complex tables are only as good as the model's Markdown; figures are
+  not extracted, so images are not embedded in the EPUB.
+- The API key is forwarded to the container as an environment variable and is
+  therefore visible in the local `docker run` command line.
+
 #### NVIDIA image
 
 `Dockerfile.nvidia` packages PyTorch 2.9.1 and torchvision 0.24.1 with CUDA 12.6

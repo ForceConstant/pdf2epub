@@ -34,6 +34,17 @@ Environment overrides:
                      Per-model device; overrides global model device
   PYTORCH_ALLOC_CONF / PYTORCH_CUDA_ALLOC_CONF  Optional allocator settings
 
+Vision-model path (hosted page transcription; use the CLI flag --vlm):
+  PDF2EPUB_VLM        1 to transcribe pages with a hosted vision model
+  PDF2EPUB_VLM_MODEL  Model id (default: deepseek/deepseek-v4.1-flash)
+  PDF2EPUB_VLM_BASE_URL  OpenAI-compatible base (default: CommandCode)
+  PDF2EPUB_VLM_API_KEY   Bearer token; falls back to COMMANDCODE_TOKEN
+  PDF2EPUB_VLM_MAX_TOKENS, PDF2EPUB_VLM_DPI, PDF2EPUB_VLM_CONCURRENCY,
+  PDF2EPUB_VLM_MAX_RETRIES, PDF2EPUB_VLM_TIMEOUT, PDF2EPUB_VLM_MAX_PIXELS
+                     Tuning for the vision path
+                     NOTE: the API key is passed as a container env var and is
+                     therefore visible in the local docker command line.
+
 Requires Bash and Docker. Run on the machine hosting your Docker daemon;
 input, output, and cache paths are bind-mounted from that machine.
 NVIDIA mode needs NVIDIA Container Toolkit and a compatible host driver.
@@ -86,6 +97,9 @@ for name in PDF2EPUB_BATCH_SIZE PDF2EPUB_MODEL_DEVICE PDF2EPUB_MODEL_OFFLOAD \
   PDF2EPUB_EQUATION_BATCH_SIZE PDF2EPUB_OCR_ERROR_BATCH_SIZE \
   PDF2EPUB_LAYOUT_DEVICE PDF2EPUB_RECOGNITION_DEVICE PDF2EPUB_DETECTION_DEVICE \
   PDF2EPUB_TABLE_DEVICE PDF2EPUB_OCR_ERROR_DEVICE \
+  PDF2EPUB_VLM PDF2EPUB_VLM_MODEL PDF2EPUB_VLM_BASE_URL PDF2EPUB_VLM_API_KEY \
+  PDF2EPUB_VLM_MAX_TOKENS PDF2EPUB_VLM_DPI PDF2EPUB_VLM_CONCURRENCY \
+  PDF2EPUB_VLM_MAX_RETRIES PDF2EPUB_VLM_TIMEOUT PDF2EPUB_VLM_MAX_PIXELS \
   PYTORCH_ALLOC_CONF PYTORCH_CUDA_ALLOC_CONF; do
   if [[ -v $name ]]; then tuning_args+=(--env "$name=${!name}"); fi
 done
