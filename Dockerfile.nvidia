@@ -1,0 +1,33 @@
+# NVIDIA CUDA 12.8 runtime supplied by the pinned PyTorch wheels (linux/amd64).
+# Host: NVIDIA Container Toolkit and a compatible driver; see README.
+FROM python:3.13-slim
+
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+# Install the matching CUDA wheel pair first. Constraints keep marker/surya's
+# dependency resolution from silently replacing them with another torch build.
+RUN printf 'torch==2.9.1+cu128\ntorchvision==0.24.1+cu128\n' > /tmp/cuda-constraints.txt \
+    && pip install --no-cache-dir torch==2.9.1 torchvision==0.24.1 \
+       --index-url https://download.pytorch.org/whl/cu128 \
+    && pip install --no-cache-dir -c /tmp/cuda-constraints.txt -r requirements.txt \
+    && pip check \
+    && python -c 'import torch; assert torch.version.cuda == "12.8", torch.version.cuda'
+
+COPY main.py .
+COPY modules/ modules/
+COPY docker/nvidia-entrypoint.sh /usr/local/bin/pdf2epub-nvidia
+RUN chmod +x /usr/local/bin/pdf2epub-nvidia
+
+ENV HF_HOME=/models \
+    TORCH_DEVICE=cuda \
+    NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility
+VOLUME /models
+WORKDIR /data
+
+ENTRYPOINT ["/usr/local/bin/pdf2epub-nvidia"]

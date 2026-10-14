@@ -16,14 +16,18 @@ Examples:
   pdf2epub.sh ./books ./converted --title '{stem}' --author "Unknown Author"
   pdf2epub.sh ./book.pdf --max-pages 20 --language en
   pdf2epub.sh ./book.pdf --skip-epub
+  PDF2EPUB_GPU=nvidia pdf2epub.sh ./book.pdf --title "Dune" --author "Frank Herbert"
 
 Environment overrides:
-  PDF2EPUB_IMAGE      Default: ghcr.io/forceconstant/pdf2epub:0.1.0
+  PDF2EPUB_GPU        none (default) or nvidia (adds --gpus all)
+  PDF2EPUB_IMAGE      Default: ghcr.io/forceconstant/pdf2epub:0.2.0
+                     With nvidia: ghcr.io/forceconstant/pdf2epub-nvidia:0.2.0
   PDF2EPUB_CACHE_DIR  Default: ${XDG_CACHE_HOME:-$HOME/.cache}/pdf2epub
 
 Requires Bash and Docker. Run on the machine hosting your Docker daemon;
 input, output, and cache paths are bind-mounted from that machine.
-The image is CPU-only. Models download on first use and are reused afterward.
+NVIDIA mode needs NVIDIA Container Toolkit and a compatible host driver.
+Models download on first use and are reused afterward.
 EOF
 }
 
@@ -54,7 +58,16 @@ else
   fail "Input file or directory does not exist: $input"
 fi
 
-image=${PDF2EPUB_IMAGE:-ghcr.io/forceconstant/pdf2epub:0.1.0}
+gpu_args=()
+case ${PDF2EPUB_GPU:-none} in
+  none) default_image=ghcr.io/forceconstant/pdf2epub:0.2.0 ;;
+  nvidia)
+    default_image=ghcr.io/forceconstant/pdf2epub-nvidia:0.2.0
+    gpu_args=(--gpus all)
+    ;;
+  *) fail 'PDF2EPUB_GPU must be none or nvidia.' ;;
+esac
+image=${PDF2EPUB_IMAGE:-$default_image}
 cache=${PDF2EPUB_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/pdf2epub}
 mkdir -p -- "$output" "$cache"
 output_mount=$(cd -- "$output" && pwd -P)
@@ -69,6 +82,7 @@ printf 'Image: %s\nOutput: %s\nModel cache: %s\n' \
 # Use your UID/GID so generated files are not owned by root.
 # No -it: --yes intentionally makes metadata generation non-interactive.
 exec docker run --rm --init \
+  "${gpu_args[@]}" \
   --user "$(id -u):$(id -g)" \
   --volume "$input_mount:/input:ro" \
   --volume "$output_mount:/output" \
