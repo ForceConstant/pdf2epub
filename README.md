@@ -320,7 +320,12 @@ Each page request has a 120-second hard deadline and up to two retries by
 default. Timed-out pages and empty transcriptions are retried; if a page still
 fails, conversion stops with its page number instead of waiting indefinitely.
 Increase `PDF2EPUB_VLM_TIMEOUT` for providers that need longer per-page
-responses, or set `PDF2EPUB_VLM_MAX_RETRIES` to change the retry count.
+responses, or set `PDF2EPUB_VLM_MAX_RETRIES` to change the retry count. Each
+successful page is checkpointed in the issue's hidden work directory. If a run
+fails, rerunning the same command resumes from completed pages; checkpoints are
+automatically discarded when the conversion succeeds and its work directory is
+cleaned up. Checkpoints are isolated by PDF contents, model, render settings,
+token limit, and prompt so stale transcriptions are not reused.
 
 The default model is `deepseek/deepseek-v4.1-flash`. On a dense 8-page test,
 concurrency 8 completed in 117 seconds at about $0.003 per page. VLM output is

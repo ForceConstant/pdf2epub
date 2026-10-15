@@ -8,6 +8,7 @@ off the local CPU/GPU entirely. The output layout matches the marker path, so
 """
 
 import base64
+import hashlib
 import http.client
 import io
 import json
@@ -414,32 +415,103 @@ def _post_json_with_deadline(request, body, timeout):
         connection.close()
 
 
-def transcribe_pages(pages, config, prompt=PAGE_PROMPT, opener=None, progress=None):
-    """Transcribe pages concurrently, preserving page order in the result."""
+def _read_checkpoint(path, page_number):
+    """Return a valid cached transcription, or None for a missing/bad file."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if data.get("page") == page_number and isinstance(data.get("text"), str):
+            return data["text"]
+    except (OSError, json.JSONDecodeError, AttributeError):
+        pass
+    return None
+
+
+def _write_checkpoint(path, page_number, text):
+    """Atomically persist one page so an interrupted run can resume safely."""
+    temporary = path.with_suffix(f".{threading.get_ident()}.tmp")
+    try:
+        temporary.write_text(
+            json.dumps({"page": page_number, "text": text}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def transcribe_pages(pages, config, prompt=PAGE_PROMPT, opener=None, progress=None,
+                     checkpoint_dir=None):
+    """Transcribe pages concurrently, preserving order and saving page checkpoints."""
     if not pages:
         return []
     workers = max(1, min(config["concurrency"], len(pages)))
     results = [None] * len(pages)
+    pending = []
+    for index, page in enumerate(pages):
+        checkpoint = (
+            Path(checkpoint_dir) / f"page-{page['page']:06d}.json"
+            if checkpoint_dir is not None else None
+        )
+        cached = _read_checkpoint(checkpoint, page["page"]) if checkpoint else None
+        if cached is not None:
+            results[index] = cached
+        else:
+            pending.append((index, page, checkpoint))
+
+    cached_count = len(pages) - len(pending)
+    if cached_count:
+        print(f"Resuming VLM transcription: reusing {cached_count} completed page(s)",
+              flush=True)
+        if progress:
+            progress(cached_count, len(pages))
+
+    def work(index, page, checkpoint):
+        text = transcribe_page(page, config, prompt, opener)
+        if checkpoint:
+            _write_checkpoint(checkpoint, page["page"], text)
+        return index, text
+
     if workers == 1:
-        for index, page in enumerate(pages):
-            results[index] = transcribe_page(page, config, prompt, opener)
+        for completed, (index, page, checkpoint) in enumerate(pending, start=1):
+            _, results[index] = work(index, page, checkpoint)
             if progress:
-                progress(index + 1, len(pages))
+                progress(cached_count + completed, len(pages))
         return results
 
-    def work(index):
-        return index, transcribe_page(pages[index], config, prompt, opener)
-
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = [pool.submit(work, index) for index in range(len(pages))]
+        futures = [pool.submit(work, index, page, checkpoint)
+                   for index, page, checkpoint in pending]
         completed = 0
         for future in as_completed(futures):
             index, text = future.result()
             results[index] = text
             completed += 1
             if progress:
-                progress(completed, len(pages))
+                progress(cached_count + completed, len(pages))
     return results
+
+
+def _checkpoint_directory(pdf_path, output_dir, config, prompt, start_page, max_pages):
+    """Choose a cache namespace that cannot mix pages from different inputs/settings."""
+    digest = hashlib.sha256()
+    with Path(pdf_path).open("rb") as source:
+        for block in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(block)
+    identity = {
+        "source_sha256": digest.hexdigest(),
+        "model": config["model"],
+        "base_url": config["base_url"],
+        "max_tokens": config["max_tokens"],
+        "dpi": config["dpi"],
+        "max_pixels": config["max_pixels"],
+        "prompt": prompt,
+        "start_page": start_page,
+        "max_pages": max_pages,
+    }
+    key = hashlib.sha256(
+        json.dumps(identity, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    ).hexdigest()[:20]
+    return Path(output_dir) / ".vlm-checkpoints" / key
 
 
 def convert_pdf_vlm(pdf_path, output_dir, max_pages=None, start_page=None,
@@ -468,10 +540,15 @@ def convert_pdf_vlm(pdf_path, output_dir, max_pages=None, start_page=None,
         print(flush=True)
     print(f"Rendered {len(pages)} page(s) from {pdf_path.name}", flush=True)
 
+    checkpoint_dir = _checkpoint_directory(
+        pdf_path, output_dir, config, prompt, start_page, max_pages
+    )
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
     transcribe_progress = report("Transcribed pages")
     try:
         texts = transcribe_pages(pages, config, prompt, opener,
-                                 progress=transcribe_progress)
+                                 progress=transcribe_progress,
+                                 checkpoint_dir=checkpoint_dir)
     finally:
         print(flush=True)
 
