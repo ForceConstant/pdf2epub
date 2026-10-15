@@ -105,7 +105,9 @@ def save_cover_image(pdf_path, images_dir, dpi=150, max_pixels=2400):
                 resample=1,
             )
         images_dir.mkdir(parents=True, exist_ok=True)
-        image.save(images_dir / "cover.jpg", format="JPEG", quality=90, optimize=True)
+        buffer = io.BytesIO()
+        image.save(buffer, format="JPEG")
+        (images_dir / "cover.jpg").write_bytes(buffer.getvalue())
     finally:
         document.close()
 
