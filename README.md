@@ -316,6 +316,21 @@ export PDF2EPUB_VLM_MAX_RETRIES=2
 ./scripts/pdf2epub.sh ./issue.pdf ./output --vlm --title '{stem}'
 ```
 
+To keep only high-confidence complete editorial articles, add `--articles-only`:
+
+```bash
+./scripts/pdf2epub.sh ./issue.pdf ./output --vlm --articles-only --title '{stem}'
+```
+
+This performs one text-only classification pass over the inferred chapter
+headings and excerpts (it does not resend page images). It keeps only candidates
+classified as complete articles with at least 90% confidence; ads, contents,
+copyright/masthead pages, uncertain items, and apparent article fragments are
+excluded. The choice is whole-chapter, so it will not cut pages from the middle
+of a selected chapter. `article-filter.json` records each decision for review.
+Keep the full transcript with `--keep-intermediates` if you want to inspect the
+source text alongside that report. This mode currently requires `--vlm`.
+
 Each page request has a 120-second hard deadline and up to two retries by
 default. Timed-out pages and empty transcriptions are retried; if a page still
 fails, conversion stops with its page number instead of waiting indefinitely.

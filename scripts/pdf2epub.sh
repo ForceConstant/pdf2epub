@@ -27,6 +27,10 @@ Vision-model path (hosted page transcription; use the CLI flag --vlm):
   PDF2EPUB_VLM_MAX_RETRIES, PDF2EPUB_VLM_TIMEOUT, PDF2EPUB_VLM_MAX_PIXELS
   COMMANDCODE_TOKEN is also forwarded as an API-key fallback.
 
+Article selection:
+  --articles-only (with --vlm) keeps only high-confidence complete editorial
+  chapters; excluded decisions are recorded in article-filter.json.
+
 Requires Bash and Docker. Run on the machine hosting your Docker daemon;
 input, output, and cache paths are bind-mounted from that machine.
 The image is CPU-only. Models download on first use and are reused afterward.

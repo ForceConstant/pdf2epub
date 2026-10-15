@@ -197,6 +197,11 @@ def main():
     parser.add_argument('--vlm-dpi', type=int, default=None,
                         help='Page render DPI for --vlm')
     parser.add_argument(
+        '--articles-only',
+        action='store_true',
+        help='With --vlm, keep only high-confidence complete editorial chapters'
+    )
+    parser.add_argument(
         '-y', '--yes',
         action='store_true',
         help='Accept the default EPUB metadata instead of prompting for it'
@@ -215,6 +220,8 @@ def main():
         vlm_config = vlm_lib.read_vlm_config()
     except vlm_lib.VlmError as exc:
         parser.error(str(exc))
+    if args.articles_only and not vlm_config:
+        parser.error('--articles-only requires the --vlm path')
 
     metadata_args = collect_metadata_args(args)
 
@@ -299,6 +306,7 @@ def main():
                     vlm_lib.convert_pdf_vlm(
                         str(pdf_path), markdown_dir, args.max_pages,
                         args.start_page, config=vlm_config,
+                        articles_only=args.articles_only,
                     )
                 else:
                     print("Converting PDF to Markdown...")

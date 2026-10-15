@@ -40,6 +40,24 @@ PAGE_PROMPT = (
     "Output ONLY the Markdown for this page."
 )
 
+ARTICLE_FILTER_PROMPT = """You are selecting complete editorial articles from a magazine transcript.
+For each numbered candidate, classify whether the whole candidate is a substantive
+editorial article (reporting, interview, review, essay, feature, or how-to).
+Advertisements, sponsored/promotional copy, table of contents, mastheads, letters
+pages, contributor lists, copyright/legal notices, and other front/back matter are
+NOT articles. Be conservative: only label a candidate article when the evidence is
+strong. The candidates are already split at likely article headings; never suggest
+splitting or trimming one. Return ONLY a JSON array, one object per candidate, with
+keys: id (integer), kind ("article", "non_article", or "uncertain"), complete
+(boolean), confidence (number 0..1), reason (short string). "complete" means the
+candidate appears to start at the article's beginning and end at its conclusion;
+do not select excerpts, teasers, or continuation fragments. Mark uncertain rather
+than guessing.
+
+Candidates:
+"""
+ARTICLE_CONFIDENCE_THRESHOLD = 0.9
+
 
 def _report_progress(label, done, total, width=24):
     """Write a compact in-place progress bar for CLI/container logs."""
@@ -140,6 +158,154 @@ def save_chapter_files(markdown, output_dir, pdf_stem):
         (output_dir / filename).write_text(content.rstrip() + "\n", encoding="utf-8")
         rows.append({"markdown": filename, "css": "", "title": title})
     return rows
+
+
+def _chapter_excerpt(content, limit=1800):
+    """Keep enough opening context to classify a chapter without resending it all."""
+    text = content.strip()
+    if len(text) <= limit:
+        return text
+    opening = text[:limit - 320].rstrip()
+    ending = text[-300:].lstrip()
+    return f"{opening}\n[…middle omitted…]\n{ending}"
+
+
+def _parse_article_decisions(response, expected_ids):
+    """Validate conservative classifier output; malformed/missing ids fail closed."""
+    text = extract_markdown(response)
+    match = re.search(r"\[[\s\S]*\]", text)
+    if not match:
+        raise VlmError("article filter returned no JSON decision array")
+    try:
+        decisions = json.loads(match.group(0))
+    except json.JSONDecodeError as exc:
+        raise VlmError("article filter returned invalid JSON") from exc
+    if not isinstance(decisions, list):
+        raise VlmError("article filter did not return a JSON array")
+
+    expected = set(expected_ids)
+    result = {}
+    for item in decisions:
+        if not isinstance(item, dict):
+            continue
+        candidate_id = item.get("id")
+        kind = item.get("kind")
+        complete = item.get("complete")
+        confidence = item.get("confidence")
+        reason = item.get("reason", "")
+        if (isinstance(candidate_id, bool) or not isinstance(candidate_id, int)
+                or candidate_id not in expected or candidate_id in result
+                or kind not in {"article", "non_article", "uncertain"}
+                or not isinstance(complete, bool)
+                or isinstance(confidence, bool)
+                or not isinstance(confidence, (int, float))
+                or not 0 <= confidence <= 1):
+            continue
+        result[candidate_id] = {
+            "kind": kind,
+            "complete": complete,
+            "confidence": float(confidence),
+            "reason": str(reason)[:240],
+        }
+    missing = expected - result.keys()
+    if missing:
+        raise VlmError(
+            "article filter omitted candidate id(s): "
+            + ", ".join(map(str, sorted(missing)))
+        )
+    return result
+
+
+def classify_article_chapters(chapters, config, opener=None):
+    """Classify whole inferred chapters; selection never removes pages mid-article."""
+    candidates = [
+        {"id": index, "title": title, "excerpt": _chapter_excerpt(content)}
+        for index, (title, content) in enumerate(chapters)
+    ]
+    if not candidates:
+        return {}
+    prompt = ARTICLE_FILTER_PROMPT + json.dumps(
+        candidates, ensure_ascii=False
+    )
+    payload = {
+        "model": config["model"],
+        "max_tokens": min(config["max_tokens"], 4096),
+        "temperature": 0,
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    body = json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(
+        f"{config['base_url']}/chat/completions",
+        data=body,
+        headers={
+            "Authorization": f"Bearer {config['api_key']}",
+            "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0",
+        },
+    )
+    attempts = config["max_retries"] + 1
+    for attempt in range(attempts):
+        try:
+            if opener:
+                with opener(request, timeout=config["timeout"]) as response:
+                    result = json.load(response)
+            else:
+                status, result = _post_json_with_deadline(
+                    request, body, config["timeout"]
+                )
+                if status < 200 or status >= 300:
+                    detail = result.decode("utf-8", "replace")[:300]
+                    retryable = status == 429 or 500 <= status < 600
+                    if not retryable or attempt == attempts - 1:
+                        raise VlmError(
+                            f"HTTP {status} from {config['base_url']}: {detail}"
+                        )
+                    time.sleep(2 * (attempt + 1))
+                    continue
+            return _parse_article_decisions(result, range(len(candidates)))
+        except json.JSONDecodeError as exc:
+            if attempt == attempts - 1:
+                raise VlmError(
+                    f"article filter returned invalid JSON after {attempts} attempts"
+                ) from exc
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", "replace")[:300]
+            retryable = exc.code == 429 or 500 <= exc.code < 600
+            if not retryable or attempt == attempts - 1:
+                raise VlmError(f"HTTP {exc.code} from {config['base_url']}: {detail}")
+        except urllib.error.URLError as exc:
+            if attempt == attempts - 1:
+                raise VlmError(f"article filter network error: {exc.reason}") from exc
+        except TimeoutError as exc:
+            if attempt == attempts - 1:
+                raise VlmError(f"article filter {exc}") from exc
+        if attempt < attempts - 1:
+            time.sleep(2 * (attempt + 1))
+    raise VlmError("article filter failed unexpectedly")
+
+
+def save_article_filter_report(output_dir, chapters, decisions):
+    """Persist the keep/drop rationale so a conservative filter is auditable."""
+    report = []
+    for index, (title, _content) in enumerate(chapters):
+        decision = decisions[index]
+        include = (
+            decision["kind"] == "article"
+            and decision["complete"]
+            and decision["confidence"] >= ARTICLE_CONFIDENCE_THRESHOLD
+        )
+        report.append({
+            "title": title,
+            "included": include,
+            "kind": decision["kind"],
+            "complete": decision["complete"],
+            "confidence": decision["confidence"],
+            "reason": decision["reason"],
+        })
+    path = Path(output_dir) / "article-filter.json"
+    path.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n",
+                    encoding="utf-8")
+    return report
 
 
 class VlmError(RuntimeError):
@@ -515,7 +681,8 @@ def _checkpoint_directory(pdf_path, output_dir, config, prompt, start_page, max_
 
 
 def convert_pdf_vlm(pdf_path, output_dir, max_pages=None, start_page=None,
-                    config=None, prompt=PAGE_PROMPT, opener=None):
+                    config=None, prompt=PAGE_PROMPT, opener=None,
+                    articles_only=False):
     """Write `<stem>.md` for a PDF using the VLM path; mirrors the marker layout."""
     config = config or read_vlm_config()
     if config is None:
@@ -562,7 +729,37 @@ def convert_pdf_vlm(pdf_path, output_dir, max_pages=None, start_page=None,
     markdown_path.write_text(markdown, encoding="utf-8")
     print(f"Markdown saved to: {markdown_path}", flush=True)
 
-    chapter_rows = save_chapter_files(markdown, output_dir, pdf_path.stem)
+    if articles_only:
+        chapters = split_markdown_into_chapters(markdown, pdf_path.stem)
+        decisions = classify_article_chapters(chapters, config, opener=opener)
+        report = save_article_filter_report(output_dir, chapters, decisions)
+        selected = [chapter for chapter, item in zip(chapters, report)
+                    if item["included"]]
+        if not selected:
+            raise VlmError(
+                "article-only filter found no high-confidence complete articles; "
+                "see article-filter.json"
+            )
+        rows = []
+        used = set()
+        for index, (title, content) in enumerate(selected, start=1):
+            base = f"{pdf_path.stem}-chapter-{index:03d}-{_slug(title)}"
+            filename = f"{base}.md"
+            while filename.lower() in used:
+                base += "-2"
+                filename = f"{base}.md"
+            used.add(filename.lower())
+            (output_dir / filename).write_text(content.rstrip() + "\n",
+                                               encoding="utf-8")
+            rows.append({"markdown": filename, "css": "", "title": title})
+        chapter_rows = rows
+        print(
+            f"Article filter kept {len(selected)} of {len(chapters)} complete "
+            f"chapter(s) at confidence >= {ARTICLE_CONFIDENCE_THRESHOLD:.0%}",
+            flush=True,
+        )
+    else:
+        chapter_rows = save_chapter_files(markdown, output_dir, pdf_path.stem)
     images_dir = output_dir / "images"
     save_cover_image(pdf_path, images_dir, dpi=config["dpi"])
 

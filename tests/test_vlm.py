@@ -155,6 +155,45 @@ class TestExtract:
             vlm.extract_markdown({"nope": True})
 
 
+class TestArticleFilter:
+    def test_parses_and_validates_conservative_decisions(self):
+        result = vlm._parse_article_decisions(completion(json.dumps([
+            {"id": 0, "kind": "article", "complete": True,
+             "confidence": 0.98, "reason": "Feature with conclusion"},
+            {"id": 1, "kind": "non_article", "complete": False,
+             "confidence": 0.99, "reason": "Product promotion"},
+        ])), [0, 1])
+        assert result[0]["kind"] == "article"
+        assert result[0]["complete"] is True
+        assert result[1]["kind"] == "non_article"
+
+    def test_missing_or_invalid_decisions_fail_closed(self):
+        with pytest.raises(vlm.VlmError, match="omitted candidate"):
+            vlm._parse_article_decisions(completion(json.dumps([
+                {"id": 0, "kind": "article", "complete": True,
+                 "confidence": 0.99, "reason": "Feature"},
+            ])), [0, 1])
+        with pytest.raises(vlm.VlmError, match="no JSON decision array"):
+            vlm._parse_article_decisions(completion("not json"), [0])
+
+    def test_classifies_whole_chapters_with_text_only_request(self):
+        seen = {}
+
+        def opener(request, timeout=None):
+            body = json.loads(request.data.decode())
+            seen["content"] = body["messages"][0]["content"]
+            return FakeResponse(completion(json.dumps([
+                {"id": 0, "kind": "article", "complete": True,
+                 "confidence": 0.96, "reason": "Substantive feature"},
+            ])))
+
+        chapters = [("A feature", "# A feature\n\n" + "body " * 800)]
+        result = vlm.classify_article_chapters(chapters, make_config(), opener=opener)
+        assert result[0]["kind"] == "article"
+        assert "image_url" not in seen["content"]
+        assert "middle omitted" in seen["content"]
+
+
 class TestTranscribe:
     def test_success_sends_auth_and_returns_text(self):
         seen = {}
@@ -392,3 +431,30 @@ class TestConvertPdfVlm:
         output = capsys.readouterr().out
         assert "Rendering pages [########################] 2/2" in output
         assert "Transcribed pages [########################] 2/2" in output
+
+    def test_articles_only_keeps_complete_confident_chapters(self, monkeypatch, tmp_path):
+        monkeypatch.setitem(sys.modules, "pypdfium2", FakePdfium(total=3))
+        responses = [
+            "# Cover", "# Contents\n\nThis issue includes features.",
+            "# Deep Feature\n\nA complete editorial story.",
+            json.dumps([
+                {"id": 0, "kind": "non_article", "complete": False,
+                 "confidence": 0.99, "reason": "Contents page"},
+                {"id": 1, "kind": "article", "complete": True,
+                 "confidence": 0.97, "reason": "Complete feature"},
+            ]),
+        ]
+
+        def opener(_request, timeout=None):
+            return FakeResponse(completion(responses.pop(0)))
+
+        pdf = tmp_path / "issue.pdf"
+        pdf.write_bytes(b"%PDF-1.4\n")
+        out = tmp_path / "out"
+        vlm.convert_pdf_vlm(pdf, out, config=make_config(concurrency=1),
+                            opener=opener, articles_only=True)
+        chapters = json.loads((out / "description.json").read_text())["chapters"]
+        assert [row["title"] for row in chapters] == ["Deep Feature"]
+        assert "complete editorial story" in (out / chapters[0]["markdown"]).read_text()
+        report = json.loads((out / "article-filter.json").read_text())
+        assert [item["included"] for item in report] == [False, True]
