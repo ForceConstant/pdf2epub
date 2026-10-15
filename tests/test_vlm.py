@@ -222,14 +222,17 @@ class TestTranscribe:
 class TestTranscribePages:
     def test_order_preserved_with_concurrency(self):
         pages = [{"page": n, "data_url": f"data:image/png;base64,{n}"} for n in range(1, 6)]
+        progress = []
 
         def opener(request, timeout=None):
             body = json.loads(request.data.decode())
             label = body["messages"][0]["content"][1]["image_url"]["url"].rsplit(",", 1)[-1]
             return FakeResponse(completion(f"page {label}"))
 
-        texts = vlm.transcribe_pages(pages, make_config(concurrency=4), opener=opener)
+        texts = vlm.transcribe_pages(pages, make_config(concurrency=4), opener=opener,
+                                     progress=lambda done, total: progress.append((done, total)))
         assert texts == [f"page {n}" for n in range(1, 6)]
+        assert progress == [(n, 5) for n in range(1, 6)]
 
     def test_single_page_and_empty_input(self):
         def opener(request, timeout=None):
@@ -283,9 +286,12 @@ class FakeImage:
 class TestRenderPages:
     def test_page_range_and_count(self, monkeypatch):
         monkeypatch.setitem(sys.modules, "pypdfium2", FakePdfium(total=5))
-        pages = vlm.render_pages("book.pdf", start_page=1, max_pages=2, dpi=144)
+        progress = []
+        pages = vlm.render_pages("book.pdf", start_page=1, max_pages=2, dpi=144,
+                                 progress=lambda done, total: progress.append((done, total)))
         assert [p["page"] for p in pages] == [2, 3]
         assert all(p["data_url"].startswith("data:image/png;base64,") for p in pages)
+        assert progress == [(0, 2), (1, 2), (2, 2)]
 
     def test_default_renders_everything(self, monkeypatch):
         monkeypatch.setitem(sys.modules, "pypdfium2", FakePdfium(total=3))
@@ -314,7 +320,9 @@ class TestConvertPdfVlm:
         with pytest.raises(vlm.VlmError, match="not enabled"):
             vlm.convert_pdf_vlm("book.pdf", tmp_path, config=None)
 
-    def test_writes_markdown_with_page_markers(self, monkeypatch, tmp_path):
+    def test_writes_markdown_with_page_markers_and_progress_bars(
+        self, monkeypatch, tmp_path, capsys
+    ):
         monkeypatch.setitem(sys.modules, "pypdfium2", FakePdfium(total=2))
         calls = {"n": 0}
 
@@ -332,3 +340,6 @@ class TestConvertPdfVlm:
         assert text.count("<!-- page ") == 2
         assert text.index("<!-- page 1 -->") < text.index("<!-- page 2 -->")
         assert "body 1" in text and "body 2" in text
+        output = capsys.readouterr().out
+        assert "Rendering pages [########################] 2/2" in output
+        assert "Transcribed pages [########################] 2/2" in output

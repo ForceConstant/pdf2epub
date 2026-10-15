@@ -16,7 +16,7 @@ import unicodedata
 import time
 import urllib.error
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 DEFAULT_BASE_URL = "https://api.commandcode.ai/provider/v1"
@@ -34,6 +34,14 @@ PAGE_PROMPT = (
     "Do NOT add commentary, page numbers, running heads, or explanations.\n"
     "Output ONLY the Markdown for this page."
 )
+
+
+def _report_progress(label, done, total, width=24):
+    """Write a compact in-place progress bar for CLI/container logs."""
+    done = min(max(done, 0), total)
+    filled = int(width * done / total) if total else width
+    bar = "#" * filled + "-" * (width - filled)
+    print(f"\r{label} [{bar}] {done}/{total}", end="", flush=True)
 
 
 def _slug(text, fallback="chapter"):
@@ -177,7 +185,8 @@ def read_vlm_config(environ=None):
     }
 
 
-def render_pages(pdf_path, start_page=0, max_pages=None, dpi=150, max_pixels=2000):
+def render_pages(pdf_path, start_page=0, max_pages=None, dpi=150, max_pixels=2000,
+                 progress=None):
     """Render PDF pages to PNG data URLs, optionally resized to a pixel budget."""
     try:
         import pypdfium2 as pdfium
@@ -194,6 +203,9 @@ def render_pages(pdf_path, start_page=0, max_pages=None, dpi=150, max_pixels=200
 
         scale = dpi / 72.0
         pages = []
+        page_count = last - first
+        if progress:
+            progress(0, page_count)
         for index in range(first, last):
             image = document[index].render(scale=scale).to_pil().convert("RGB")
             longest = max(image.size)
@@ -208,6 +220,8 @@ def render_pages(pdf_path, start_page=0, max_pages=None, dpi=150, max_pixels=200
             encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
             pages.append({"page": index + 1,
                           "data_url": f"data:image/png;base64,{encoded}"})
+            if progress:
+                progress(len(pages), page_count)
         return pages
     finally:
         document.close()
@@ -322,14 +336,17 @@ def transcribe_pages(pages, config, prompt=PAGE_PROMPT, opener=None, progress=No
         return results
 
     def work(index):
-        text = transcribe_page(pages[index], config, prompt, opener)
-        if progress:
-            progress(index + 1, len(pages))
-        return index, text
+        return index, transcribe_page(pages[index], config, prompt, opener)
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        for index, text in pool.map(work, range(len(pages))):
+        futures = [pool.submit(work, index) for index in range(len(pages))]
+        completed = 0
+        for future in as_completed(futures):
+            index, text = future.result()
             results[index] = text
+            completed += 1
+            if progress:
+                progress(completed, len(pages))
     return results
 
 
@@ -345,14 +362,26 @@ def convert_pdf_vlm(pdf_path, output_dir, max_pages=None, start_page=None,
     print(f"VLM transcription: model={config['model']} dpi={config['dpi']} "
           f"concurrency={config['concurrency']}", flush=True)
 
-    pages = render_pages(pdf_path, start_page=start_page, max_pages=max_pages,
-                         dpi=config["dpi"], max_pixels=config["max_pixels"])
+    def report(label):
+        def update(done, total):
+            _report_progress(label, done, total)
+        return update
+
+    render_progress = report("Rendering pages")
+    try:
+        pages = render_pages(pdf_path, start_page=start_page, max_pages=max_pages,
+                             dpi=config["dpi"], max_pixels=config["max_pixels"],
+                             progress=render_progress)
+    finally:
+        print(flush=True)
     print(f"Rendered {len(pages)} page(s) from {pdf_path.name}", flush=True)
 
-    def report(done, total):
-        print(f"  transcribed {done}/{total} pages", flush=True)
-
-    texts = transcribe_pages(pages, config, prompt, opener, progress=report)
+    transcribe_progress = report("Transcribed pages")
+    try:
+        texts = transcribe_pages(pages, config, prompt, opener,
+                                 progress=transcribe_progress)
+    finally:
+        print(flush=True)
 
     chunks = []
     for page, text in zip(pages, texts):
