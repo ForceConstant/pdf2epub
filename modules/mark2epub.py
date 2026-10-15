@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 import subprocess
 from typing import Dict, Optional
 from urllib.parse import quote
-from xml.sax.saxutils import escape as xml_escape
+from xml.sax.saxutils import escape as xml_escape, quoteattr
 import latex2mathml.converter
 from modules import metadata as metadata_lib
 
@@ -273,7 +273,7 @@ def get_packageOPF_XML(md_filenames=[], image_filenames=[], css_filenames=[], de
             x.setAttribute('media-type',"image/jpeg")
         elif ext == '.png':
             x.setAttribute('media-type',"image/png")
-        if image_filename==description_data["cover_image"]:
+        if image_filename == Path(description_data.get("cover_image") or "").name:
             x.setAttribute('properties',"cover-image")
 
             ## Ensure compatibility by also providing a meta tag in the metadata
@@ -338,8 +338,23 @@ def flatten_text(value) -> str:
         return ", ".join(str(item) for item in value if item)
     return str(value)
 
-def get_coverpage_XML(title, authors):
-    """Generate a simple cover page with title and optional author input."""
+def get_coverpage_XML(title, authors, cover_image=None):
+    """Generate a cover page with the selected image, or a typographic fallback."""
+    if cover_image:
+        image_href = "images/{}".format(quote(Path(cover_image).name))
+        return f"""<?xml version="1.0" encoding="utf-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en">
+<head>
+<title>{xml_escape(flatten_text(title))}</title>
+<style type="text/css">
+html, body {{ margin: 0; padding: 0; width: 100%; height: 100%; }}
+body {{ display: flex; justify-content: center; align-items: center; }}
+img {{ display: block; max-width: 100%; max-height: 100%; object-fit: contain; }}
+</style>
+</head>
+<body><img src="{xml_escape(image_href)}" alt={quoteattr(flatten_text(title))} /></body>
+</html>"""
+
     return f"""<?xml version="1.0" encoding="utf-8"?>
 <html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en">
 <head>
@@ -382,7 +397,7 @@ p {{
 </body>
 </html>"""
 
-def get_TOC_XML(default_css_filenames, markdown_filenames):
+def get_TOC_XML(default_css_filenames, markdown_filenames, chapter_titles=None):
     ## Returns the XML data for the TOC.xhtml file
 
     toc_xhtml = """<?xml version="1.0" encoding="UTF-8"?>\n"""
@@ -395,15 +410,17 @@ def get_TOC_XML(default_css_filenames, markdown_filenames):
 
     toc_xhtml += """</head>\n<body>\n"""
     toc_xhtml += """<nav epub:type="toc" role="doc-toc" id="toc">\n<h2>Contents</h2>\n<ol epub:type="list">"""
+    chapter_titles = chapter_titles or {}
     for i,md_filename in enumerate(markdown_filenames):
         stem = md_filename.split(".")[0]
         href = quote("s{:05d}-{}.xhtml".format(i, stem))
-        toc_xhtml += """<li><a href="{}">{}</a></li>""".format(href, xml_escape(stem))
+        label = chapter_titles.get(md_filename, stem)
+        toc_xhtml += """<li><a href="{}">{}</a></li>""".format(href, xml_escape(label))
     toc_xhtml += """</ol>\n</nav>\n</body>\n</html>"""
 
     return toc_xhtml
 
-def get_TOCNCX_XML(markdown_filenames, uid="", title=""):
+def get_TOCNCX_XML(markdown_filenames, uid="", title="", chapter_titles=None):
     ## Returns the XML data for the TOC.ncx file
 
     toc_ncx = """<?xml version="1.0" encoding="UTF-8"?>\n"""
@@ -416,11 +433,13 @@ def get_TOCNCX_XML(markdown_filenames, uid="", title=""):
     toc_ncx += """</head>\n"""
     toc_ncx += """<docTitle><text>{}</text></docTitle>\n""".format(xml_escape(title))
     toc_ncx += """<navMap>\n"""
+    chapter_titles = chapter_titles or {}
     for i,md_filename in enumerate(markdown_filenames):
         stem = md_filename.split(".")[0]
         src = quote("s{:05d}-{}.xhtml".format(i, stem))
         toc_ncx += """<navPoint id="navpoint-{}" playOrder="{}">\n""".format(i, i + 1)
-        toc_ncx += """<navLabel>\n<text>{}</text>\n</navLabel>""".format(xml_escape(stem))
+        label = chapter_titles.get(md_filename, stem)
+        toc_ncx += """<navLabel>\n<text>{}</text>\n</navLabel>""".format(xml_escape(label))
         toc_ncx += """<content src="{}"/>""".format(src)
         toc_ncx += """ </navPoint>"""
     toc_ncx += """</navMap>\n</ncx>"""
@@ -617,10 +636,14 @@ def main(args, metadata: Optional[Dict] = None):
 
         # Compile list of files
         all_md_filenames = []
+        chapter_titles = {}
         all_css_filenames = json_data["default_css"][:]
         for chapter in json_data["chapters"]:
             if chapter["markdown"] not in all_md_filenames:
                 all_md_filenames.append(chapter["markdown"])
+            chapter_titles[chapter["markdown"]] = chapter.get(
+                "title", Path(chapter["markdown"]).stem
+            )
             if len(chapter["css"]) and (chapter["css"] not in all_css_filenames):
                 all_css_filenames.append(chapter["css"])
         
@@ -695,7 +718,9 @@ def main(args, metadata: Optional[Dict] = None):
             )
 
             # Write cover page
-            coverpage_data = get_coverpage_XML(title, authors)
+            coverpage_data = get_coverpage_XML(
+                title, authors, json_data.get("cover_image")
+            )
             epub.writestr("OPS/titlepage.xhtml", coverpage_data.encode('utf-8'), zipfile.ZIP_DEFLATED)
 
             # Write processed chapters
@@ -717,7 +742,9 @@ def main(args, metadata: Optional[Dict] = None):
             # Write TOC files
             print("Writing table of contents...")
             epub.writestr("OPS/TOC.xhtml", 
-                get_TOC_XML(json_data["default_css"], all_md_filenames),
+                get_TOC_XML(
+                    json_data["default_css"], all_md_filenames, chapter_titles
+                ),
                 zipfile.ZIP_DEFLATED
             )
             
@@ -725,7 +752,8 @@ def main(args, metadata: Optional[Dict] = None):
                 get_TOCNCX_XML(
                     all_md_filenames,
                     uid=json_data["metadata"].get("dc:identifier", ""),
-                    title=json_data["metadata"].get("dc:title", "")
+                    title=json_data["metadata"].get("dc:title", ""),
+                    chapter_titles=chapter_titles,
                 ),
                 zipfile.ZIP_DEFLATED
             )

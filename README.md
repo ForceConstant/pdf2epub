@@ -311,5 +311,9 @@ export PDF2EPUB_VLM_CONCURRENCY=8
 ```
 
 The default model is `deepseek/deepseek-v4.1-flash`. On a dense 8-page test,
-concurrency 8 completed in 117 seconds at about $0.003 per page. This path does
-not extract figures, and complex tables depend on the model's Markdown output.
+concurrency 8 completed in 117 seconds at about $0.003 per page. VLM output is
+split into article chapters at level-1 headings (the prompt asks the model to
+use level-1 headings for article starts); the complete page transcript is also
+kept as `<pdf-stem>.md`. The PDF's first page is rendered as the EPUB cover and
+is omitted from the article text. This path still does not extract or place
+in-body figures, and complex tables depend on the model's Markdown output.

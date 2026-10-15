@@ -11,6 +11,8 @@ import base64
 import io
 import json
 import os
+import re
+import unicodedata
 import time
 import urllib.error
 import urllib.request
@@ -24,12 +26,105 @@ PAGE_PROMPT = (
     "Convert this single page image into GitHub-flavored Markdown.\n"
     "Transcribe every visible piece of text exactly, in natural reading order.\n"
     "Preserve headings, lists, block quotes, code blocks and inline emphasis.\n"
+    "Use a level-1 heading (#) for the start/title of a new article; use level-2 "
+    "and lower headings for sections within an article.\n"
     "Render tables as Markdown tables. Render equations as LaTeX ($...$ inline, "
     "$$...$$ display).\n"
     "Keep image captions as [Figure: caption] on their own line.\n"
     "Do NOT add commentary, page numbers, running heads, or explanations.\n"
     "Output ONLY the Markdown for this page."
 )
+
+
+def _slug(text, fallback="chapter"):
+    """Return a short, filesystem-safe slug for generated chapter filenames."""
+    value = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode()
+    value = re.sub(r"[^a-zA-Z0-9]+", "-", value).strip("-").lower()
+    return (value[:60].rstrip("-") or fallback)
+
+
+def _without_cover_page(markdown):
+    """Drop page 1's transcription; it is represented by the EPUB cover image."""
+    return re.sub(
+        r"(?ms)^<!-- page 1 -->\s*.*?(?=^<!-- page \d+ -->|\Z)", "", markdown
+    ).strip()
+
+
+def split_markdown_into_chapters(markdown, fallback_title):
+    """Split page transcription at article-title headings, preserving section text.
+
+    VLM output is instructed to mark article starts as H1. If it returns no H1,
+    H2 headings are used as a conservative fallback; if it returns no headings,
+    the body remains a single chapter.
+    """
+    body = _without_cover_page(markdown)
+    body = re.sub(r"(?m)^<!-- page \d+ -->\s*$", "", body).strip()
+    lines = body.splitlines()
+    heading_re = re.compile(r"^(#{1,2})\s+(.+?)\s*#*\s*$")
+    h1_indices = [i for i, line in enumerate(lines)
+                  if (m := heading_re.match(line)) and len(m.group(1)) == 1]
+    level = 1 if h1_indices else 2
+    starts = []
+    for i, line in enumerate(lines):
+        match = heading_re.match(line)
+        if match and len(match.group(1)) == level:
+            starts.append((i, match.group(2).strip()))
+
+    if not starts:
+        return [(fallback_title, body or fallback_title)]
+
+    chapters = []
+    preamble = "\n".join(lines[:starts[0][0]]).strip()
+    if preamble:
+        chapters.append(("Front Matter", preamble))
+    for pos, (line_index, title) in enumerate(starts):
+        end = starts[pos + 1][0] if pos + 1 < len(starts) else len(lines)
+        content = "\n".join(lines[line_index:end]).strip()
+        if content:
+            chapters.append((title, content))
+    return chapters or [(fallback_title, body or fallback_title)]
+
+
+def save_cover_image(pdf_path, images_dir, dpi=150, max_pixels=2400):
+    """Render the PDF's first page as the EPUB's photographic cover asset."""
+    try:
+        import pypdfium2 as pdfium
+    except ImportError as exc:  # pragma: no cover - dependency of marker
+        raise VlmError("pypdfium2 is required to render the PDF cover") from exc
+
+    document = pdfium.PdfDocument(str(pdf_path))
+    try:
+        if not len(document):
+            raise VlmError("cannot create a cover from a PDF with no pages")
+        image = document[0].render(scale=dpi / 72.0).to_pil().convert("RGB")
+        longest = max(image.size)
+        if longest > max_pixels:
+            ratio = max_pixels / longest
+            image = image.resize(
+                (max(1, int(image.width * ratio)), max(1, int(image.height * ratio))),
+                resample=1,
+            )
+        images_dir.mkdir(parents=True, exist_ok=True)
+        image.save(images_dir / "cover.jpg", format="JPEG", quality=90, optimize=True)
+    finally:
+        document.close()
+
+
+def save_chapter_files(markdown, output_dir, pdf_stem):
+    """Write one Markdown file per inferred article and return EPUB chapter rows."""
+    chapters = split_markdown_into_chapters(markdown, pdf_stem)
+    rows = []
+    used = set()
+    for index, (title, content) in enumerate(chapters, start=1):
+        base = f"{pdf_stem}-chapter-{index:03d}-{_slug(title)}"
+        filename = f"{base}.md"
+        while filename.lower() in used:
+            base += "-2"
+            filename = f"{base}.md"
+        used.add(filename.lower())
+        (output_dir / filename).write_text(content.rstrip() + "\n", encoding="utf-8")
+        rows.append({"markdown": filename, "css": "", "title": title})
+    return rows
 
 
 class VlmError(RuntimeError):
@@ -266,4 +361,26 @@ def convert_pdf_vlm(pdf_path, output_dir, max_pages=None, start_page=None,
     markdown_path = output_dir / f"{pdf_path.stem}.md"
     markdown_path.write_text(markdown, encoding="utf-8")
     print(f"Markdown saved to: {markdown_path}", flush=True)
+
+    chapter_rows = save_chapter_files(markdown, output_dir, pdf_path.stem)
+    images_dir = output_dir / "images"
+    save_cover_image(pdf_path, images_dir, dpi=config["dpi"])
+
+    # mark2epub uses this manifest to distinguish generated article chapters
+    # from the full transcript retained above for reference.
+    description_path = output_dir / "description.json"
+    try:
+        description = json.loads(description_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError):
+        description = {}
+    description["chapters"] = chapter_rows
+    description["cover_image"] = description.get("cover_image") or "cover.jpg"
+    description.setdefault("metadata", {})
+    description.setdefault("default_css", ["style.css"])
+    description_path.write_text(
+        json.dumps(description, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    print(f"Created {len(chapter_rows)} article chapter(s)", flush=True)
+    print(f"Rendered EPUB cover to: {images_dir / 'cover.jpg'}", flush=True)
     return markdown_path
