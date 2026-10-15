@@ -7,8 +7,11 @@ pdfium module is faked, so these run anywhere the rest of the suite does.
 import io
 import json
 import sys
+import threading
+import time
 import types
 import urllib.error
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest
 
@@ -76,6 +79,7 @@ class TestConfig:
         assert config["concurrency"] == 8
         assert config["api_key"] == "tok"
         assert config["base_url"] == vlm.DEFAULT_BASE_URL
+        assert config["timeout"] == 120
 
     def test_explicit_key_preferred_over_fallback(self):
         config = vlm.read_vlm_config({
@@ -182,6 +186,51 @@ class TestTranscribe:
 
         assert vlm.transcribe_page(PAGE, make_config(max_retries=2), opener=opener) == "ok"
         assert calls["n"] == 2
+
+    def test_retries_empty_transcription(self, monkeypatch):
+        monkeypatch.setattr(vlm.time, "sleep", lambda _s: None)
+        calls = {"n": 0}
+
+        def opener(request, timeout=None):
+            calls["n"] += 1
+            content = "" if calls["n"] == 1 else "recovered"
+            return FakeResponse(completion(content))
+
+        assert vlm.transcribe_page(PAGE, make_config(), opener=opener) == "recovered"
+        assert calls["n"] == 2
+
+    def test_hard_deadline_aborts_a_slow_body(self):
+        class SlowHandler(BaseHTTPRequestHandler):
+            def do_POST(self):  # noqa: N802 - BaseHTTPRequestHandler API
+                self.rfile.read(int(self.headers["Content-Length"]))
+                self.send_response(200)
+                self.send_header("Content-Length", "2")
+                self.end_headers()
+                self.wfile.write(b"{")
+                self.wfile.flush()
+                time.sleep(0.5)
+                try:
+                    self.wfile.write(b"}")
+                except OSError:
+                    pass
+
+            def log_message(self, _format, *_args):
+                pass
+
+        server = HTTPServer(("127.0.0.1", 0), SlowHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        config = make_config(base_url=f"http://127.0.0.1:{server.server_port}",
+                             timeout=0.1, max_retries=0)
+        started = time.monotonic()
+        try:
+            with pytest.raises(vlm.VlmError, match="timed out after 0.1s"):
+                vlm.transcribe_page(PAGE, config)
+            assert time.monotonic() - started < 0.4
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=1)
 
     def test_gives_up_after_retries(self, monkeypatch):
         monkeypatch.setattr(vlm.time, "sleep", lambda _s: None)

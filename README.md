@@ -311,8 +311,16 @@ variable. Set `PDF2EPUB_VLM_API_KEY` or `COMMANDCODE_TOKEN`, then run:
 export PDF2EPUB_VLM_API_KEY=...
 export PDF2EPUB_VLM_MAX_TOKENS=16384
 export PDF2EPUB_VLM_CONCURRENCY=8
+export PDF2EPUB_VLM_TIMEOUT=120
+export PDF2EPUB_VLM_MAX_RETRIES=2
 ./scripts/pdf2epub.sh ./issue.pdf ./output --vlm --title '{stem}'
 ```
+
+Each page request has a 120-second hard deadline and up to two retries by
+default. Timed-out pages and empty transcriptions are retried; if a page still
+fails, conversion stops with its page number instead of waiting indefinitely.
+Increase `PDF2EPUB_VLM_TIMEOUT` for providers that need longer per-page
+responses, or set `PDF2EPUB_VLM_MAX_RETRIES` to change the retry count.
 
 The default model is `deepseek/deepseek-v4.1-flash`. On a dense 8-page test,
 concurrency 8 completed in 117 seconds at about $0.003 per page. VLM output is

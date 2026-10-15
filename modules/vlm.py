@@ -8,16 +8,20 @@ off the local CPU/GPU entirely. The output layout matches the marker path, so
 """
 
 import base64
+import http.client
 import io
 import json
 import os
 import re
+import socket
+import threading
 import unicodedata
 import time
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from urllib.parse import urlsplit
 
 DEFAULT_BASE_URL = "https://api.commandcode.ai/provider/v1"
 DEFAULT_MODEL = "deepseek/deepseek-v4.1-flash"
@@ -180,7 +184,7 @@ def read_vlm_config(environ=None):
         "dpi": positive_int("PDF2EPUB_VLM_DPI", 150),
         "concurrency": positive_int("PDF2EPUB_VLM_CONCURRENCY", 4),
         "max_retries": positive_int("PDF2EPUB_VLM_MAX_RETRIES", 2),
-        "timeout": positive_int("PDF2EPUB_VLM_TIMEOUT", 300),
+        "timeout": positive_int("PDF2EPUB_VLM_TIMEOUT", 120),
         "max_pixels": positive_int("PDF2EPUB_VLM_MAX_PIXELS", 2000),
     }
 
@@ -286,7 +290,7 @@ def extract_markdown(response):
 
 
 def transcribe_page(page, config, prompt=PAGE_PROMPT, opener=None):
-    """Transcribe one rendered page, retrying transient failures."""
+    """Transcribe one page with a hard per-attempt deadline and retries."""
     payload = build_payload(
         config["model"], prompt, page["data_url"], config["max_tokens"]
     )
@@ -301,12 +305,31 @@ def transcribe_page(page, config, prompt=PAGE_PROMPT, opener=None):
             "User-Agent": "Mozilla/5.0",
         },
     )
-    open_url = opener or urllib.request.urlopen
     attempts = config["max_retries"] + 1
     for attempt in range(attempts):
         try:
-            with open_url(request, timeout=config["timeout"]) as response:
-                return extract_markdown(json.load(response))
+            if opener:
+                with opener(request, timeout=config["timeout"]) as response:
+                    result = json.load(response)
+            else:
+                status, result = _post_json_with_deadline(
+                    request, body, config["timeout"]
+                )
+                if status < 200 or status >= 300:
+                    detail = result.decode("utf-8", "replace")[:300]
+                    retryable = status == 429 or 500 <= status < 600
+                    if not retryable or attempt == attempts - 1:
+                        raise VlmError(
+                            f"HTTP {status} from {config['base_url']}: {detail}"
+                        )
+                    time.sleep(2 * (attempt + 1))
+                    continue
+            return extract_markdown(result)
+        except json.JSONDecodeError as exc:
+            if attempt == attempts - 1:
+                raise VlmError(
+                    f"page {page['page']} returned invalid JSON after {attempts} attempts"
+                ) from exc
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", "replace")[:300]
             retryable = exc.code == 429 or 500 <= exc.code < 600
@@ -315,11 +338,80 @@ def transcribe_page(page, config, prompt=PAGE_PROMPT, opener=None):
         except urllib.error.URLError as exc:
             if attempt == attempts - 1:
                 raise VlmError(f"network error talking to {config['base_url']}: {exc}")
-        except TimeoutError:
+        except (TimeoutError, socket.timeout) as exc:
             if attempt == attempts - 1:
-                raise VlmError(f"timed out after {config['timeout']}s per page")
+                raise VlmError(
+                    f"page {page['page']} timed out after {config['timeout']}s "
+                    f"on each of {attempts} attempts"
+                ) from exc
+            print(
+                f"\nPage {page['page']} timed out after {config['timeout']}s; "
+                f"retrying ({attempt + 2}/{attempts})",
+                flush=True,
+            )
+        except VlmError as exc:
+            if str(exc) != "model returned an empty page transcription" or attempt == attempts - 1:
+                raise
+            print(
+                f"\nPage {page['page']} returned an empty transcription; "
+                f"retrying ({attempt + 2}/{attempts})",
+                flush=True,
+            )
         time.sleep(2 * (attempt + 1))
     raise VlmError("unreachable")
+
+
+def _post_json_with_deadline(request, body, timeout):
+    """POST JSON and abort the underlying socket at a wall-clock deadline.
+
+    urllib's socket timeout is an inactivity timeout, so a server that trickles
+    bytes can keep a request alive indefinitely. Closing the HTTP connection
+    from a timer enforces an actual upper bound for both headers and body reads.
+    """
+    parsed = urlsplit(request.full_url)
+    connection_type = http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
+    connection = connection_type(parsed.hostname, parsed.port, timeout=timeout)
+    expired = threading.Event()
+
+    def abort():
+        expired.set()
+        if connection.sock is not None:
+            try:
+                connection.sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+        connection.close()
+
+    timer = threading.Timer(timeout, abort)
+    timer.daemon = True
+    timer.start()
+    try:
+        target = parsed.path or "/"
+        if parsed.query:
+            target += f"?{parsed.query}"
+        headers = {
+            "Authorization": request.get_header("Authorization"),
+            "Content-Type": request.get_header("Content-type") or "application/json",
+            "User-Agent": request.get_header("User-agent") or "Mozilla/5.0",
+        }
+        connection.request("POST", target, body=body, headers=headers)
+        response = connection.getresponse()
+        response_body = response.read()
+        if expired.is_set():
+            raise TimeoutError(f"request exceeded its {timeout}s deadline")
+        parsed_body = (
+            response_body
+            if response.status < 200 or response.status >= 300
+            else json.loads(response_body)
+        )
+        return response.status, parsed_body
+    except (http.client.HTTPException, OSError) as exc:
+        if expired.is_set():
+            raise TimeoutError(f"request exceeded its {timeout}s deadline") from exc
+        raise urllib.error.URLError(exc) from exc
+    finally:
+        timer.cancel()
+        connection.close()
 
 
 def transcribe_pages(pages, config, prompt=PAGE_PROMPT, opener=None, progress=None):
