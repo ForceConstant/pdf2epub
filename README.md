@@ -194,6 +194,7 @@ Options:
   --start-page INT         Page number to start from
   --skip-epub              Skip EPUB generation, only create markdown
   --skip-md                Skip markdown generation, use existing markdown files
+  --keep-intermediates     Keep Markdown, images, and conversion files beside the EPUB
   --title STR              Book title (supports {stem} and {filename})
   --author STR             Author(s); separate several names with ";"
   --publisher STR          Publisher
@@ -236,14 +237,13 @@ pytest tests/
 ```
 output_directory/
 ├── document_name/
-│   ├── document_name.md
 │   ├── document_name.epub
-│   ├── document_name_metadata.json
-│   └── images/
-│       ├── image1.png
-│       ├── image2.jpg
-│       └── ...
 ```
+
+After a successful EPUB conversion, generated Markdown and other working files
+are removed so each book directory contains only its EPUB. Use
+`--keep-intermediates` to retain them for review; `--skip-epub` always leaves
+the Markdown output in place.
 
 ## 🤝 Contributing
 

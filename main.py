@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import os
+import shutil
 import sys
 from pathlib import Path
 import modules.pdf2md as pdf2md
@@ -89,6 +90,22 @@ def stdin_is_interactive() -> bool:
         return False
 
 
+def clean_working_directory(work_dir: Path, epub_path: Path) -> bool:
+    """Remove conversion artifacts, retaining only the completed EPUB."""
+    if not epub_path.is_file():
+        return False
+
+    epub_to_keep = epub_path.resolve()
+    for entry in work_dir.iterdir():
+        if entry.resolve() == epub_to_keep:
+            continue
+        if entry.is_symlink() or not entry.is_dir():
+            entry.unlink()
+        else:
+            shutil.rmtree(entry)
+    return True
+
+
 def main():
     if torch.cuda.is_available():
         print("CUDA is available. Using GPU for processing.")
@@ -133,6 +150,11 @@ def main():
         '--skip-md',
         action='store_true',
         help='Skip markdown generation, use existing markdown files'
+    )
+    parser.add_argument(
+        '--keep-intermediates',
+        action='store_true',
+        help='Keep Markdown, images, and other conversion files beside the EPUB'
     )
     parser.add_argument(
         '--vlm',
@@ -247,6 +269,18 @@ def main():
 
                 print("Converting Markdown to EPUB...")
                 mark2epub.convert_to_epub(markdown_dir, output_path, metadata=epub_metadata)
+                if not args.keep_intermediates:
+                    epub_path = markdown_dir / f"{markdown_dir.name}.epub"
+                    if clean_working_directory(markdown_dir, epub_path):
+                        print(
+                            f"Removed conversion files; kept EPUB: {epub_path}",
+                            flush=True,
+                        )
+                    else:
+                        print(
+                            "EPUB file was not created; keeping conversion files.",
+                            file=sys.stderr,
+                        )
                 
         except Exception as e:
             print(f"Error processing {pdf_path.name}: {str(e)}", file=sys.stderr)
