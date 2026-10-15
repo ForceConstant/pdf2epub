@@ -194,7 +194,8 @@ Options:
   --start-page INT         Page number to start from
   --skip-epub              Skip EPUB generation, only create markdown
   --skip-md                Skip markdown generation, use existing markdown files
-  --keep-intermediates     Keep Markdown, images, and conversion files beside the EPUB
+  --keep-intermediates     Keep Markdown, images, and conversion files in the work area
+  --series STR             Set series directory; supports {stem} and {filename}
   --title STR              Book title (supports {stem} and {filename})
   --author STR             Author(s); separate several names with ";"
   --publisher STR          Publisher
@@ -236,14 +237,17 @@ pytest tests/
 
 ```
 output_directory/
-├── document_name/
-│   ├── document_name.epub
+├── Make/
+│   ├── Make 20250402.epub
+│   └── Make 20250501.epub
 ```
 
-After a successful EPUB conversion, generated Markdown and other working files
-are removed so each book directory contains only its EPUB. Use
-`--keep-intermediates` to retain them for review; `--skip-epub` always leaves
-the Markdown output in place.
+The series directory is inferred from a recognizable trailing issue/date suffix
+in the PDF filename (`Make 20250402.pdf` becomes `Make/Make 20250402.epub`).
+Use `--series "Series Name"` when a filename cannot be inferred reliably.
+After a successful conversion, generated Markdown and other working files are
+removed from the hidden work area; `--keep-intermediates` retains them there
+for review. `--skip-epub` always leaves the Markdown work files in place.
 
 ## 🤝 Contributing
 

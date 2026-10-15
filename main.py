@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import os
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -90,19 +91,43 @@ def stdin_is_interactive() -> bool:
         return False
 
 
-def clean_working_directory(work_dir: Path, epub_path: Path) -> bool:
-    """Remove conversion artifacts, retaining only the completed EPUB."""
-    if not epub_path.is_file():
+def infer_series_name(pdf_stem: str, explicit_series: str = None) -> str:
+    """Infer a magazine series from a trailing issue/date suffix, if present."""
+    if explicit_series:
+        series = explicit_series.replace("{stem}", pdf_stem).strip()
+    else:
+        issue_suffix = re.compile(
+            r"^(?P<series>.+?)[ _-]+(?:"
+            r"\d{6,8}|"
+            r"\d{4}(?:[-_.]\d{1,2}(?:[-_.]\d{1,2})?)?|"
+            r"issue[ _-]*#?\s*\d+|"
+            r"#\s*\d+)\s*$",
+            re.IGNORECASE,
+        )
+        match = issue_suffix.match(pdf_stem)
+        series = match.group("series").rstrip(" _-.") if match else pdf_stem
+
+    if not series or series in {".", ".."} or "/" in series or "\\" in series:
+        raise ValueError(
+            "series name must be a non-empty single path component"
+        )
+    return series
+
+
+def clean_working_directory(work_dir: Path, output_root: Path) -> bool:
+    """Delete conversion work files and now-empty staging directories."""
+    if not work_dir.is_dir():
         return False
 
-    epub_to_keep = epub_path.resolve()
-    for entry in work_dir.iterdir():
-        if entry.resolve() == epub_to_keep:
-            continue
-        if entry.is_symlink() or not entry.is_dir():
-            entry.unlink()
-        else:
-            shutil.rmtree(entry)
+    shutil.rmtree(work_dir)
+    parent = work_dir.parent
+    output_root = output_root.resolve()
+    while parent.resolve() != output_root:
+        try:
+            parent.rmdir()
+        except OSError:
+            break
+        parent = parent.parent
     return True
 
 
@@ -127,7 +152,7 @@ def main():
         'output_path',
         nargs='?',
         type=str,
-        help='Path to output directory (default: directory named after PDF)'
+        help='Output root for series directories (default: beside the input PDF)'
     )
     parser.add_argument(
         '--max-pages',
@@ -154,7 +179,13 @@ def main():
     parser.add_argument(
         '--keep-intermediates',
         action='store_true',
-        help='Keep Markdown, images, and other conversion files beside the EPUB'
+        help='Keep Markdown, images, and other conversion files in the work area'
+    )
+    parser.add_argument(
+        '--series',
+        type=str,
+        default=None,
+        help='Series directory name (supports {stem} and {filename}; inferred by default)'
     )
     parser.add_argument(
         '--vlm',
@@ -224,13 +255,33 @@ def main():
     for pdf_path in queue:
         print(f"\nProcessing: {pdf_path.name}")
         
-        # Get output directory for this PDF
-        if args.output_path:
-            output_path = Path(args.output_path)
-            markdown_dir = output_path / pdf_path.stem
+        output_root = Path(args.output_path) if args.output_path else pdf_path.parent
+        try:
+            series_template = args.series
+            if series_template:
+                series_template = series_template.replace(
+                    "{filename}", pdf_path.name
+                )
+            series_name = infer_series_name(pdf_path.stem, series_template)
+        except ValueError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            failed.append(pdf_path.name)
+            continue
+
+        series_dir = output_root / series_name
+        work_root = output_root / ".pdf2epub-work" / series_name
+        generated_work_dir = work_root / pdf_path.stem
+        # `--skip-md` can reuse prior retained work files or the old issue-named
+        # output directory created before series routing was introduced.
+        if args.skip_md:
+            candidates = (
+                generated_work_dir,
+                output_root / pdf_path.stem,
+                series_dir / pdf_path.stem,
+            )
+            markdown_dir = next((p for p in candidates if p.is_dir()), generated_work_dir)
         else:
-            markdown_dir = pdf2md.get_default_output_dir(pdf_path)
-            output_path = markdown_dir.parent
+            markdown_dir = generated_work_dir
             
         try:
             # Check if markdown directory exists when skipping MD generation
@@ -268,10 +319,18 @@ def main():
                         continue
 
                 print("Converting Markdown to EPUB...")
-                mark2epub.convert_to_epub(markdown_dir, output_path, metadata=epub_metadata)
+                series_dir.mkdir(parents=True, exist_ok=True)
+                epub_path = series_dir / f"{pdf_path.stem}.epub"
+                mark2epub.convert_to_epub(
+                    markdown_dir,
+                    series_dir,
+                    metadata=epub_metadata,
+                    epub_filename=epub_path.name,
+                )
                 if not args.keep_intermediates:
-                    epub_path = markdown_dir / f"{markdown_dir.name}.epub"
-                    if clean_working_directory(markdown_dir, epub_path):
+                    if epub_path.is_file() and clean_working_directory(
+                        markdown_dir, output_root
+                    ):
                         print(
                             f"Removed conversion files; kept EPUB: {epub_path}",
                             flush=True,

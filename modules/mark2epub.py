@@ -539,7 +539,12 @@ def get_chapter_XML(work_dir: str, md_filename: str, css_filenames: list[str], c
 
 
 
-def convert_to_epub(markdown_dir: Path, output_path: Path, metadata: Optional[Dict] = None) -> None:
+def convert_to_epub(
+    markdown_dir: Path,
+    output_path: Path,
+    metadata: Optional[Dict] = None,
+    epub_filename: Optional[str] = None,
+) -> None:
     """
     Convert markdown files and images to EPUB format.
 
@@ -549,6 +554,8 @@ def convert_to_epub(markdown_dir: Path, output_path: Path, metadata: Optional[Di
         metadata: Metadata to apply without prompting. When given, no
             interactive prompts are shown and the conversion can run
             unattended; see :func:`modules.metadata.build_metadata`.
+        epub_filename: Optional issue-specific EPUB filename. Defaults to the
+            Markdown directory name with an `.epub` extension.
     """
     if not markdown_dir.exists():
         raise FileNotFoundError(f"Markdown directory not found: {markdown_dir}")
@@ -557,7 +564,9 @@ def convert_to_epub(markdown_dir: Path, output_path: Path, metadata: Optional[Di
         raise ValueError(f"No markdown files found in: {markdown_dir}")
     
     # Generate EPUB file
-    epub_path = markdown_dir / f"{markdown_dir.name}.epub"
+    output_path = Path(output_path)
+    output_path.mkdir(parents=True, exist_ok=True)
+    epub_path = output_path / (epub_filename or f"{markdown_dir.name}.epub")
     main([str(markdown_dir), str(epub_path)], metadata=metadata)
 
 def main(args, metadata: Optional[Dict] = None):
