@@ -229,7 +229,7 @@ def classify_article_chapters(chapters, config, opener=None):
     )
     payload = {
         "model": config["model"],
-        "max_tokens": min(config["max_tokens"], 4096),
+        "max_tokens": config["max_tokens"],
         "temperature": 0,
         "messages": [{"role": "user", "content": prompt}],
     }

@@ -182,14 +182,18 @@ class TestArticleFilter:
         def opener(request, timeout=None):
             body = json.loads(request.data.decode())
             seen["content"] = body["messages"][0]["content"]
+            seen["max_tokens"] = body["max_tokens"]
             return FakeResponse(completion(json.dumps([
                 {"id": 0, "kind": "article", "complete": True,
                  "confidence": 0.96, "reason": "Substantive feature"},
             ])))
 
         chapters = [("A feature", "# A feature\n\n" + "body " * 800)]
-        result = vlm.classify_article_chapters(chapters, make_config(), opener=opener)
+        result = vlm.classify_article_chapters(
+            chapters, make_config(max_tokens=16384), opener=opener
+        )
         assert result[0]["kind"] == "article"
+        assert seen["max_tokens"] == 16384
         assert "image_url" not in seen["content"]
         assert "middle omitted" in seen["content"]
 
