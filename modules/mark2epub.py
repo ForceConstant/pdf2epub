@@ -188,6 +188,15 @@ def get_all_filenames(the_dir, extensions=[]):
     all_files = [x for x in all_files if x.split(".")[-1] in extensions]
     return all_files
 
+def chapter_filename(index: int) -> str:
+    """Use reader-safe archive paths independent of the input filename.
+
+    Some readers decode percent escapes before resolving navigation links,
+    treating a source filename's literal '#' as a fragment separator.
+    Keep human-readable titles in the TOCs, not in resource paths.
+    """
+    return f"s{index:05d}.xhtml"
+
 def get_packageOPF_XML(md_filenames=[], image_filenames=[], css_filenames=[], description_data=None):
     doc = minidom.Document()
 
@@ -255,10 +264,10 @@ def get_packageOPF_XML(md_filenames=[], image_filenames=[], css_filenames=[], de
     x.setAttribute('media-type',"application/xhtml+xml")
     manifest.appendChild(x)
 
-    for i,md_filename in enumerate(md_filenames):
+    for i,_ in enumerate(md_filenames):
         x = doc.createElement('item')
         x.setAttribute('id',"s{:05d}".format(i))
-        x.setAttribute('href', quote("s{:05d}-{}.xhtml".format(i, md_filename.split(".")[0])))
+        x.setAttribute('href', chapter_filename(i))
         x.setAttribute('media-type',"application/xhtml+xml")
         manifest.appendChild(x)
 
@@ -413,7 +422,7 @@ def get_TOC_XML(default_css_filenames, markdown_filenames, chapter_titles=None):
     chapter_titles = chapter_titles or {}
     for i,md_filename in enumerate(markdown_filenames):
         stem = md_filename.split(".")[0]
-        href = quote("s{:05d}-{}.xhtml".format(i, stem))
+        href = chapter_filename(i)
         label = chapter_titles.get(md_filename, stem)
         toc_xhtml += """<li><a href="{}">{}</a></li>""".format(href, xml_escape(label))
     toc_xhtml += """</ol>\n</nav>\n</body>\n</html>"""
@@ -436,7 +445,7 @@ def get_TOCNCX_XML(markdown_filenames, uid="", title="", chapter_titles=None):
     chapter_titles = chapter_titles or {}
     for i,md_filename in enumerate(markdown_filenames):
         stem = md_filename.split(".")[0]
-        src = quote("s{:05d}-{}.xhtml".format(i, stem))
+        src = chapter_filename(i)
         toc_ncx += """<navPoint id="navpoint-{}" playOrder="{}">\n""".format(i, i + 1)
         label = chapter_titles.get(md_filename, stem)
         toc_ncx += """<navLabel>\n<text>{}</text>\n</navLabel>""".format(xml_escape(label))
@@ -737,7 +746,7 @@ def main(args, metadata: Optional[Dict] = None):
             for i, chapter in enumerate(json_data["chapters"]):
                 print(f"  Writing chapter {i+1}/{len(json_data['chapters'])}: {chapter['markdown']}")
                 epub.writestr(
-                    f"OPS/s{i:05d}-{chapter['markdown'].split('.')[0]}.xhtml",
+                    f"OPS/{chapter_filename(i)}",
                     chapter_data[chapter["markdown"]].encode('utf-8'),
                     zipfile.ZIP_DEFLATED
                 )
