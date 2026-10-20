@@ -9,6 +9,7 @@ import modules.pdf2md as pdf2md
 import modules.mark2epub as mark2epub
 import modules.metadata as metadata_lib
 import modules.vlm as vlm_lib
+import modules.chapter_filter as chapter_filter
 import torch
 
 
@@ -202,6 +203,10 @@ def main():
         help='With --vlm, keep only high-confidence complete editorial chapters'
     )
     parser.add_argument(
+        '--substantive-only', action='store_true',
+        help='Text-only chapter pass: remove blurbs, teasers and contents; also accepts an EPUB'
+    )
+    parser.add_argument(
         '-y', '--yes',
         action='store_true',
         help='Accept the default EPUB metadata instead of prompting for it'
@@ -222,6 +227,32 @@ def main():
         parser.error(str(exc))
     if args.articles_only and not vlm_config:
         parser.error('--articles-only requires the --vlm path')
+
+    substance_config = None
+    if args.substantive_only:
+        if args.skip_epub:
+            parser.error('--substantive-only requires EPUB generation')
+        try:
+            substance_config = vlm_lib.read_vlm_config(dict(os.environ, PDF2EPUB_VLM='1'))
+        except vlm_lib.VlmError as exc:
+            parser.error(str(exc))
+    if args.input_path and Path(args.input_path).suffix.lower() == '.epub':
+        if not args.substantive_only:
+            parser.error('EPUB input requires --substantive-only')
+        if args.skip_md or args.articles_only or args.max_pages is not None or args.start_page is not None:
+            parser.error('PDF transcription options do not apply to EPUB input')
+        source = Path(args.input_path)
+        destination = (Path(args.output_path) / source.name if args.output_path
+                       else source.with_name(source.stem + '-substantive.epub'))
+        try:
+            chapter_filter.filter_epub(source, destination, substance_config,
+                                       progress=lambda done, total: vlm_lib._report_progress(
+                                           'Chapter substance', done, total))
+        except Exception as exc:
+            print(f'Error filtering {source.name}: {exc}', file=sys.stderr)
+            sys.exit(1)
+        print(f'Filtered EPUB: {destination}', flush=True)
+        return
 
     metadata_args = collect_metadata_args(args)
 
@@ -335,6 +366,12 @@ def main():
                     metadata=epub_metadata,
                     epub_filename=epub_path.name,
                 )
+                if substance_config:
+                    chapter_filter.filter_epub(
+                        epub_path, epub_path, substance_config,
+                        progress=lambda done, total: vlm_lib._report_progress(
+                            'Chapter substance', done, total),
+                    )
                 if not args.keep_intermediates:
                     if epub_path.is_file() and clean_working_directory(
                         markdown_dir, output_root

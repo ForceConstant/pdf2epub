@@ -216,15 +216,18 @@ def _parse_article_decisions(response, expected_ids):
     return result
 
 
-def classify_article_chapters(chapters, config, opener=None):
+def classify_article_chapters(chapters, config, opener=None,
+                              prompt_template=ARTICLE_FILTER_PROMPT,
+                              excerpt_limit=1800):
     """Classify whole inferred chapters; selection never removes pages mid-article."""
     candidates = [
-        {"id": index, "title": title, "excerpt": _chapter_excerpt(content)}
+        {"id": index, "title": title,
+         "excerpt": _chapter_excerpt(content, limit=excerpt_limit)}
         for index, (title, content) in enumerate(chapters)
     ]
     if not candidates:
         return {}
-    prompt = ARTICLE_FILTER_PROMPT + json.dumps(
+    prompt = prompt_template + json.dumps(
         candidates, ensure_ascii=False
     )
     payload = {

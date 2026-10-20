@@ -6,8 +6,8 @@ usage() {
   cat <<'EOF'
 Usage: pdf2epub.sh INPUT [OUTPUT_DIR] [PDF2EPUB_OPTIONS...]
 
-INPUT is a host PDF file or directory of PDFs.
-OUTPUT_DIR defaults to ./output; results go into OUTPUT_DIR/<pdf-stem>/.
+INPUT is a host PDF, directory of PDFs, or EPUB with --substantive-only.
+OUTPUT_DIR defaults to ./output; PDFs go into OUTPUT_DIR/<series>/.
 All remaining arguments are forwarded unchanged to pdf2epub.
 Runs unattended (--yes), removes the container on exit, and keeps the model cache.
 
@@ -30,6 +30,9 @@ Vision-model path (hosted page transcription; use the CLI flag --vlm):
 Article selection:
   --articles-only (with --vlm) keeps only high-confidence complete editorial
   chapters; excluded decisions are recorded in article-filter.json.
+  --substantive-only adds a text-only pass over finished EPUB chapters to drop
+  blurbs, contents, teasers and promotional matter. Also accepts existing EPUBs;
+  those are written directly into OUTPUT_DIR without re-transcription.
 
 Requires Bash and Docker. Run on the machine hosting your Docker daemon;
 input, output, and cache paths are bind-mounted from that machine.
@@ -57,7 +60,7 @@ if [[ -d $input ]]; then
   input_mount=$(cd -- "$input" && pwd -P)
   container_input=/input
 elif [[ -f $input ]]; then
-  [[ $input == *.[pP][dD][fF] ]] || fail "Input is not a PDF: $input"
+  [[ $input == *.[pP][dD][fF] || $input == *.[eE][pP][uU][bB] ]] || fail "Input is not a PDF or EPUB: $input"
   input_mount=$(cd -- "$(dirname -- "$input")" && pwd -P)
   container_input="/input/$(basename -- "$input")"
 else

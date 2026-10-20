@@ -349,3 +349,44 @@ use level-1 headings for article starts); the complete page transcript is also
 kept as `<pdf-stem>.md`. The PDF's first page is rendered as the EPUB cover and
 is omitted from the article text. This path still does not extract or place
 in-body figures, and complex tables depend on the model's Markdown output.
+
+### Substantive chapter pass (PDF or existing EPUB)
+
+`--substantive-only` is an optional **second, text-only pipeline** over the finished
+EPUB. It drops product announcements/spec blurbs, news roundups, download catalogs,
+teasers, issue previews, ads, contents/navigator pages and other non-reading matter.
+It keeps developed analysis/interviews, useful tutorials, and actual hands-on
+reviews. Long collections of blurbs are not articles; short useful tutorials can be.
+
+```bash
+# Add to a new VLM conversion (also works after local OCR or --skip-md):
+./scripts/pdf2epub.sh issue.pdf ./output --vlm --substantive-only --yes
+
+# Filter an already-converted EPUB without rendering/transcribing the PDF again:
+./scripts/pdf2epub.sh './Beat Magazine #20260250.epub' ./articles --substantive-only
+# Result: ./articles/Beat Magazine #20260250.epub
+
+# Native CLI, no output directory: writes issue-substantive.epub beside the source.
+python main.py issue.epub --substantive-only
+```
+
+Uses the existing `PDF2EPUB_VLM_*` text API settings and `COMMANDCODE_TOKEN` fallback;
+this flag alone does **not** switch PDF OCR to vision. Each chapter receives a
+separate bounded text request, concurrently up to `PDF2EPUB_VLM_CONCURRENCY`.
+Classification uses up to 18,000 characters of opening/ending text and at least
+16,384 output tokens (including reasoning). Only `kind=article` with confidence
+>=0.80 is included. This confidence is a model judgment, not calibrated certainty.
+Unlike `--articles-only`, this pass does not require a chapter to have both its own
+opening and conclusion: substantive continuation chapters can stay.
+
+The adjacent `*.substantive-filter.json` records **every chapter's decision and
+reason**, survives normal work-directory cleanup, and checkpoints completed calls.
+An unchanged source/model/prompt can resume without reclassifying completed
+chapters. Any API/parse failure or zero retained chapters leaves the EPUB untouched.
+For new PDF conversions the unfiltered EPUB is kept as `*.unfiltered.epub`; for EPUB
+input the original is unchanged unless the output directory explicitly selects
+the same file (then a non-overwriting backup is required). Reading order, EPUB 3
+navigation and legacy NCX are updated together. Cover, retained article content,
+styles and images are preserved. This pass cannot split merged stories or trim
+blurbs inside an otherwise retained chapter. Review a representative issue before
+large batch runs. Existing behavior remains unchanged without the flag.

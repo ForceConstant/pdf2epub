@@ -111,3 +111,33 @@ class TestStdinDetection:
 
         monkeypatch.setattr(cli.sys, "stdin", Closed())
         assert cli.stdin_is_interactive() is False
+
+
+def test_existing_epub_substance_cli_does_not_run_pdf_transcription(tmp_path, monkeypatch):
+    from test_chapter_filter import make_epub, classifier, CONFIG
+    source = tmp_path / 'Beat #250.epub'
+    make_epub(source)
+    original_filter = cli.chapter_filter.filter_epub
+    monkeypatch.setattr(cli.vlm_lib, 'read_vlm_config',
+                        lambda environ=None: CONFIG if environ is not None else None)
+    monkeypatch.setattr(cli.chapter_filter, 'filter_epub',
+                        lambda src, dst, cfg, **kw: original_filter(src, dst, cfg, classifier))
+    def no_pdf(*args, **kwargs):
+        raise AssertionError('EPUB must not run OCR')
+    monkeypatch.setattr(cli.pdf2md, 'add_pdfs_to_queue', no_pdf)
+    monkeypatch.setattr(sys, 'argv', ['main.py', str(source), '--substantive-only'])
+    cli.main()
+    assert source.with_name('Beat #250-substantive.epub').is_file()
+    assert len(cli.chapter_filter.read_epub(source)[3]) == 3
+
+
+def test_existing_epub_requires_opt_in(tmp_path, monkeypatch):
+    source = tmp_path / 'original.epub'
+    source.write_bytes(b'untouched')
+    monkeypatch.setattr(cli.vlm_lib, 'read_vlm_config', lambda: None)
+    monkeypatch.setattr(sys, 'argv', ['main.py', str(source)])
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+    assert exc.value.code == 2
+    assert source.read_bytes() == b'untouched'
+    assert list(tmp_path.iterdir()) == [source]
