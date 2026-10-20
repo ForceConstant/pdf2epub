@@ -184,3 +184,33 @@ def test_pdf_filter_is_one_final_pass_independent_of_transcription(tmp_path, mon
     assert len(observed['filter']) == bool(flags)
     result = output / 'Beat' / 'Beat #250.epub'
     assert len(cli.chapter_filter.read_epub(result)[3]) == (1 if flags else 3)
+
+
+@pytest.mark.parametrize('existing_output', [False, True])
+def test_failed_pdf_article_filter_never_publishes_raw_epub(tmp_path, monkeypatch, existing_output):
+    from test_chapter_filter import make_epub, CONFIG
+    source = tmp_path / 'Beat #250.pdf'
+    source.touch()
+    output = tmp_path / 'output'
+    destination = output / 'Beat' / 'Beat #250.epub'
+    if existing_output:
+        destination.parent.mkdir(parents=True)
+        destination.write_bytes(b'previous-output')
+    monkeypatch.setattr(cli.vlm_lib, 'read_vlm_config',
+                        lambda environ=None: CONFIG if environ is not None else None)
+    monkeypatch.setattr(cli.pdf2md, 'add_pdfs_to_queue', lambda path: [source])
+    monkeypatch.setattr(cli.pdf2md, 'convert_pdf', lambda src, work, *args: work.mkdir(parents=True))
+    monkeypatch.setattr(cli.mark2epub, 'convert_to_epub',
+                        lambda work, out, **kw: make_epub(out / kw['epub_filename']))
+    def fail_filter(*args, **kwargs):
+        raise cli.vlm_lib.VlmError('classification failed')
+    monkeypatch.setattr(cli.chapter_filter, 'filter_epub', fail_filter)
+    monkeypatch.setattr(sys, 'argv', ['main.py', str(source), str(output), '--yes', '--articles-only'])
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+    assert exc.value.code == 1
+    if existing_output:
+        assert destination.read_bytes() == b'previous-output'
+    else:
+        assert not destination.exists()
+    assert list(output.glob('.pdf2epub-work/**/.epub-unfiltered/*.epub'))

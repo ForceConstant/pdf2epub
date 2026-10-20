@@ -19,6 +19,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 from modules.vlm import VlmError, classify_article_chapters
+from modules.xhtml import normalize_html_voids
 
 OPF = 'http://www.idpf.org/2007/opf'
 XHTML = 'http://www.w3.org/1999/xhtml'
@@ -74,6 +75,20 @@ def read_epub(path):
         if archive.testzip():
             raise VlmError('EPUB contains a corrupt archive member')
         entries = [(item, archive.read(item)) for item in archive.infolist()]
+    repaired = []
+    for item, data in entries:
+        if item.filename.endswith('.xhtml'):
+            try:
+                ET.fromstring(data)
+            except ET.ParseError as original:
+                try:
+                    data = normalize_html_voids(data.decode('utf-8')).encode('utf-8')
+                    ET.fromstring(data)
+                except (ET.ParseError, UnicodeError, ValueError) as exc:
+                    raise VlmError(f'Invalid XHTML in {item.filename}: {original}') from exc
+                print(f'Normalized HTML void elements in {item.filename}', flush=True)
+        repaired.append((item, data))
+    entries = repaired
     files = {item.filename: data for item, data in entries}
     container = ET.fromstring(files['META-INF/container.xml'])
     package_path = next(node.attrib['full-path'] for node in container.iter()
@@ -189,6 +204,7 @@ def filter_epub(source, destination, config, classifier=classify_article_chapter
     non-overwriting .unfiltered.epub backup is made before replacement.
     """
     source, destination = Path(source), Path(destination)
+    print(f'Article filter enabled: reading {source}', flush=True)
     destination.parent.mkdir(parents=True, exist_ok=True)
     entries, package_path, package, chapters = read_epub(source)
     if not chapters:

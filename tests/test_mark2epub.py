@@ -119,3 +119,19 @@ class TestInteractiveFlags:
 
         params = inspect.signature(mark2epub.get_metadata_from_user).parameters
         assert "filename" in params
+
+
+def test_raw_html_line_breaks_in_tables_produce_parseable_xhtml(tmp_path):
+    from xml.etree import ElementTree as ET
+    source = '# Gear\n\n| Type | Name |\n| --- | --- |\n| Dual-Röhren-<br>Großmembran-<BR>Kondensatormikrofon | Aurora<br>Beat |\n'
+    document, _ = mark2epub.get_chapter_XML(tmp_path, 'gear.md', [], content=source)
+    root = ET.fromstring(document)
+    assert len(root.findall('.//{http://www.w3.org/1999/xhtml}br')) == 3
+    assert 'Dual-Röhren-' in document
+
+
+def test_void_normalization_preserves_code_comments_attributes_and_valid_markup():
+    from modules.xhtml import normalize_html_voids
+    source = '<p>Text &amp; prose &lt;br&gt;</p><!-- <br> -->\n<img alt="a > b" src="a.jpg"><br /><hr>\n<pre>&lt;br&gt;</pre><script>const x = "<br>";</script>'
+    output = normalize_html_voids(source)
+    assert output == source.replace('<img alt="a > b" src="a.jpg">', '<img alt="a > b" src="a.jpg" />').replace('<hr>', '<hr />')

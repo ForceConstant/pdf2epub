@@ -28,7 +28,11 @@ def verify_navigation_output(directory):
     titles = ["Jane Wiedlin", "A Year In The Life", "Café & Live"]
     chapters = []
     for name, title in zip(filenames, titles):
-        (work / name).write_text(f"# {title}\n\nArticle: {title}.\n", encoding="utf-8")
+        (work / name).write_text(
+            f"# {title}\n\nArticle: {title}.\n\n"
+            "| Model | Type |\n| --- | --- |\n| Aurora<br>Beat | Dual-Röhren |\n",
+            encoding="utf-8",
+        )
         chapters.append({"markdown": name, "title": title, "css": ""})
     (work / "description.json").write_text(json.dumps({"chapters": chapters}))
     output = directory / "output"
@@ -67,6 +71,7 @@ def verify_navigation_output(directory):
             assert not target.fragment and not target.query
             chapter = ET.fromstring(archive.read("OPS/" + target.path))
             assert chapter.find(".//h:h1", xhtml_ns).text == title
+            assert len(chapter.findall('.//h:br', xhtml_ns)) == 1
 
 
 def test_navigation_targets_resolve_for_special_source_filenames(tmp_path):

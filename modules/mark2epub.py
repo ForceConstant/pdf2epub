@@ -14,6 +14,7 @@ from urllib.parse import quote
 from xml.sax.saxutils import escape as xml_escape, quoteattr
 import latex2mathml.converter
 from modules import metadata as metadata_lib
+from modules.xhtml import normalize_html_voids
 
 def get_user_input(prompt: str, default: str = "") -> str:
     """Get user input with a default value."""
@@ -526,11 +527,13 @@ def get_chapter_XML(work_dir: str, md_filename: str, css_filenames: list[str], c
     html_text = markdown.markdown(
         markdown_data,
         extensions=["codehilite", "tables", "fenced_code", "footnotes"],
+        output_format="xhtml",
         extension_configs={"codehilite": {"guess_lang": False}}
     )
 
     # Convert LaTeX math to MathML for EPUB readers
     html_text = convert_math_to_mathml(html_text)
+    html_text = normalize_html_voids(html_text)
 
     # Generate XHTML wrapper
     xhtml = f"""<?xml version="1.0" encoding="UTF-8"?>

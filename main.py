@@ -211,6 +211,7 @@ def main():
     add_metadata_arguments(parser)
 
     args = parser.parse_args()
+    print(f"Article filtering: {'enabled' if args.articles_only else 'disabled'}", flush=True)
 
     if args.vlm:
         os.environ['PDF2EPUB_VLM'] = '1'
@@ -353,18 +354,23 @@ def main():
                 print("Converting Markdown to EPUB...")
                 series_dir.mkdir(parents=True, exist_ok=True)
                 epub_path = series_dir / f"{pdf_path.stem}.epub"
+                # A failed filter must not leave a raw EPUB at the final path,
+                # where batch existence checks could mistake it for success.
+                build_dir = markdown_dir / '.epub-unfiltered' if filter_config else series_dir
+                build_dir.mkdir(parents=True, exist_ok=True)
                 mark2epub.convert_to_epub(
                     markdown_dir,
-                    series_dir,
+                    build_dir,
                     metadata=epub_metadata,
                     epub_filename=epub_path.name,
                 )
                 if filter_config:
                     chapter_filter.filter_epub(
-                        epub_path, epub_path, filter_config,
+                        build_dir / epub_path.name, epub_path, filter_config,
                         progress=lambda done, total: vlm_lib._report_progress(
                             'Article filter', done, total),
                     )
+                    print(f'Article-filtered EPUB ready: {epub_path}', flush=True)
                 if not args.keep_intermediates:
                     if epub_path.is_file() and clean_working_directory(
                         markdown_dir, output_root

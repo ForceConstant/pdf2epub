@@ -153,3 +153,40 @@ def test_broken_nav_never_installs_output(tmp_path):
     with pytest.raises(VlmError, match='Broken EPUB navigation'):
         filter_epub(source, dest, CONFIG, classifier)
     assert dest.read_bytes() == b'old-output'
+
+
+def test_existing_epub_with_raw_html_breaks_filters_without_changing_source(tmp_path, capsys):
+    source, dest = tmp_path / 'original.epub', tmp_path / 'filtered.epub'
+    make_epub(source)
+    with zipfile.ZipFile(source) as archive:
+        entries = [(i, archive.read(i)) for i in archive.infolist()]
+    with zipfile.ZipFile(source, 'w') as archive:
+        for info, data in entries:
+            if info.filename == 'OPS/article.xhtml':
+                data = data.replace(b'Developed analysis.', b'Developed<br>analysis.')
+            archive.writestr(info, data)
+    original = source.read_bytes()
+    filter_epub(source, dest, CONFIG, classifier)
+    assert source.read_bytes() == original
+    assert len(read_epub(dest)[3]) == 1
+    with zipfile.ZipFile(dest) as archive:
+        assert b'Developed<br />analysis.' in archive.read('OPS/article.xhtml')
+    output = capsys.readouterr().out
+    assert 'Article filter enabled: reading' in output
+    assert 'Normalized HTML void elements in OPS/article.xhtml' in output
+
+
+def test_unrepairable_xhtml_logs_filter_start_before_failing(tmp_path, capsys):
+    source, dest = tmp_path / 'original.epub', tmp_path / 'filtered.epub'
+    make_epub(source)
+    with zipfile.ZipFile(source) as archive:
+        entries = [(i, archive.read(i)) for i in archive.infolist()]
+    with zipfile.ZipFile(source, 'w') as archive:
+        for info, data in entries:
+            if info.filename == 'OPS/article.xhtml':
+                data = data.replace(b'</p>', b'</wrong>')
+            archive.writestr(info, data)
+    with pytest.raises(VlmError, match='Invalid XHTML in OPS/article.xhtml'):
+        filter_epub(source, dest, CONFIG, classifier)
+    assert 'Article filter enabled: reading' in capsys.readouterr().out
+    assert not dest.exists()

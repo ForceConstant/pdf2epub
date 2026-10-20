@@ -378,9 +378,11 @@ output directory still use the `-substantive.epub` suffix, and the adjacent
 reason**, survives normal work-directory cleanup, and checkpoints completed calls.
 An unchanged source/model/prompt can resume without reclassifying completed
 chapters. Any API/parse failure or zero retained chapters leaves the EPUB untouched.
-For new PDF conversions the unfiltered EPUB is kept as `*.unfiltered.epub`; for EPUB
-input the original is unchanged unless the output directory explicitly selects
-the same file (then a non-overwriting backup is required). Reading order, EPUB 3
+For new PDF conversions the raw EPUB is staged in the hidden work area; only a
+successfully filtered EPUB is published at the final output path. Use
+`--keep-intermediates` to retain that staged raw EPUB. For EPUB input the original
+is unchanged unless the output directory explicitly selects the same file
+(then a non-overwriting `*.unfiltered.epub` backup is required). Reading order, EPUB 3
 navigation and legacy NCX are updated together. Cover, retained article content,
 styles and images are preserved. This pass cannot split merged stories or trim
 blurbs inside an otherwise retained chapter. Review a representative issue before
@@ -395,3 +397,20 @@ Converter flags: --yes --vlm --articles-only --title \{stem\}
 ```
 
 Docker environment arguments and API-key values are not included in that diagnostic.
+
+### Verify that article filtering completed
+
+Capture both stdout and stderr, including launcher diagnostics and failures:
+
+```bash
+./scripts/pdf2epub.sh issue.pdf ./output --vlm --articles-only > test.log 2>&1
+```
+
+Require `Article filtering: enabled`, `Article filter enabled: reading ...`,
+completed chapter counts and a `Substantive chapters: KEPT/TOTAL; report: ...`
+summary. PDF runs also print `Article-filtered EPUB ready: ...` after successful
+filtering. `EPUB creation complete` by itself refers to EPUB assembly, not proof
+that classification succeeded. Check the process exit status and adjacent report.
+Raw HTML void tags such as `<br>` in Markdown tables are normalized to valid
+XHTML when generating chapters. Existing EPUBs with the same void-tag defect can
+be normalized in memory for filtering without changing the original source.
