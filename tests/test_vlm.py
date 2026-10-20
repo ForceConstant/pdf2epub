@@ -190,7 +190,8 @@ class TestArticleFilter:
 
         chapters = [("A feature", "# A feature\n\n" + "body " * 800)]
         result = vlm.classify_article_chapters(
-            chapters, make_config(max_tokens=16384), opener=opener
+            chapters, make_config(max_tokens=16384), opener=opener,
+            prompt_template="Classify candidates:\n"
         )
         assert result[0]["kind"] == "article"
         assert seen["max_tokens"] == 16384
@@ -436,17 +437,11 @@ class TestConvertPdfVlm:
         assert "Rendering pages [########################] 2/2" in output
         assert "Transcribed pages [########################] 2/2" in output
 
-    def test_articles_only_keeps_complete_confident_chapters(self, monkeypatch, tmp_path):
+    def test_transcription_preserves_all_chapters_for_the_final_article_pass(self, monkeypatch, tmp_path):
         monkeypatch.setitem(sys.modules, "pypdfium2", FakePdfium(total=3))
         responses = [
             "# Cover", "# Contents\n\nThis issue includes features.",
-            "# Deep Feature\n\nA complete editorial story.",
-            json.dumps([
-                {"id": 0, "kind": "non_article", "complete": False,
-                 "confidence": 0.99, "reason": "Contents page"},
-                {"id": 1, "kind": "article", "complete": True,
-                 "confidence": 0.97, "reason": "Complete feature"},
-            ]),
+            "# Deep Feature\n\nA substantial editorial story.",
         ]
 
         def opener(_request, timeout=None):
@@ -455,10 +450,8 @@ class TestConvertPdfVlm:
         pdf = tmp_path / "issue.pdf"
         pdf.write_bytes(b"%PDF-1.4\n")
         out = tmp_path / "out"
-        vlm.convert_pdf_vlm(pdf, out, config=make_config(concurrency=1),
-                            opener=opener, articles_only=True)
+        vlm.convert_pdf_vlm(pdf, out, config=make_config(concurrency=1), opener=opener)
         chapters = json.loads((out / "description.json").read_text())["chapters"]
-        assert [row["title"] for row in chapters] == ["Deep Feature"]
-        assert "complete editorial story" in (out / chapters[0]["markdown"]).read_text()
-        report = json.loads((out / "article-filter.json").read_text())
-        assert [item["included"] for item in report] == [False, True]
+        assert [row["title"] for row in chapters] == ["Contents", "Deep Feature"]
+        assert not responses
+        assert not (out / "article-filter.json").exists()

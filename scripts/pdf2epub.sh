@@ -6,7 +6,7 @@ usage() {
   cat <<'EOF'
 Usage: pdf2epub.sh INPUT [OUTPUT_DIR] [PDF2EPUB_OPTIONS...]
 
-INPUT is a host PDF, directory of PDFs, or EPUB with --substantive-only.
+INPUT is a host PDF, directory of PDFs, or EPUB with --articles-only.
 OUTPUT_DIR defaults to ./output; PDFs go into OUTPUT_DIR/<series>/.
 All remaining arguments are forwarded unchanged to pdf2epub.
 Runs unattended (--yes), removes the container on exit, and keeps the model cache.
@@ -28,11 +28,10 @@ Vision-model path (hosted page transcription; use the CLI flag --vlm):
   COMMANDCODE_TOKEN is also forwarded as an API-key fallback.
 
 Article selection:
-  --articles-only (with --vlm) keeps only high-confidence complete editorial
-  chapters; excluded decisions are recorded in article-filter.json.
-  --substantive-only adds a text-only pass over finished EPUB chapters to drop
-  blurbs, contents, teasers and promotional matter. Also accepts existing EPUBs;
-  those are written directly into OUTPUT_DIR without re-transcription.
+  --articles-only keeps substantial articles, tutorials and reviews, removing
+  blurbs, ads, teasers and contents. Accepts PDF or existing EPUB input.
+  --substantive-only is a compatibility alias for --articles-only (same pass).
+  Existing EPUBs are written directly into OUTPUT_DIR without re-transcription.
 
 Requires Bash and Docker. Run on the machine hosting your Docker daemon;
 input, output, and cache paths are bind-mounted from that machine.
@@ -84,6 +83,11 @@ cache_mount=$(cd -- "$cache" && pwd -P)
 
 printf 'Image: %s\nOutput: %s\nModel cache: %s\n' \
   "$image" "$output_mount" "$cache_mount" >&2
+
+# Print only converter options, not Docker --env arguments containing credentials.
+printf 'Converter flags:' >&2
+printf ' %q' --yes "$@" >&2
+printf '\n' >&2
 
 # Arrays/quoted arguments preserve spaces, semicolons, and literal placeholders.
 # Use your UID/GID so generated files are not owned by root.

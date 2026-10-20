@@ -113,7 +113,11 @@ class TestStdinDetection:
         assert cli.stdin_is_interactive() is False
 
 
-def test_existing_epub_substance_cli_does_not_run_pdf_transcription(tmp_path, monkeypatch):
+@pytest.mark.parametrize('flags', [
+    ['--articles-only'], ['--substantive-only'],
+    ['--articles-only', '--substantive-only'],
+])
+def test_existing_epub_article_cli_does_not_run_pdf_transcription(tmp_path, monkeypatch, flags):
     from test_chapter_filter import make_epub, classifier, CONFIG
     source = tmp_path / 'Beat #250.epub'
     make_epub(source)
@@ -125,7 +129,7 @@ def test_existing_epub_substance_cli_does_not_run_pdf_transcription(tmp_path, mo
     def no_pdf(*args, **kwargs):
         raise AssertionError('EPUB must not run OCR')
     monkeypatch.setattr(cli.pdf2md, 'add_pdfs_to_queue', no_pdf)
-    monkeypatch.setattr(sys, 'argv', ['main.py', str(source), '--substantive-only'])
+    monkeypatch.setattr(sys, 'argv', ['main.py', str(source), *flags])
     cli.main()
     assert source.with_name('Beat #250-substantive.epub').is_file()
     assert len(cli.chapter_filter.read_epub(source)[3]) == 3
@@ -141,3 +145,42 @@ def test_existing_epub_requires_opt_in(tmp_path, monkeypatch):
     assert exc.value.code == 2
     assert source.read_bytes() == b'untouched'
     assert list(tmp_path.iterdir()) == [source]
+
+
+@pytest.mark.parametrize('vision', [False, True])
+@pytest.mark.parametrize('flags', [
+    ['--articles-only'], ['--substantive-only'],
+    ['--articles-only', '--substantive-only'], [],
+])
+def test_pdf_filter_is_one_final_pass_independent_of_transcription(tmp_path, monkeypatch, vision, flags):
+    from test_chapter_filter import make_epub, classifier, CONFIG
+    source = tmp_path / 'Beat #250.pdf'
+    source.write_bytes(b'%PDF-1.4\n')
+    output = tmp_path / 'output'
+    observed = {'transcription': [], 'filter': []}
+    def config(environ=None):
+        return CONFIG if environ is not None or vision else None
+    monkeypatch.setattr(cli.vlm_lib, 'read_vlm_config', config)
+    monkeypatch.setattr(cli.pdf2md, 'add_pdfs_to_queue', lambda path: [source])
+    def transcribe(*args, **kwargs):
+        assert 'articles_only' not in kwargs, 'No old completeness prefilter'
+        observed['transcription'].append('vision')
+        args[1].mkdir(parents=True)
+    def local(*args, **kwargs):
+        observed['transcription'].append('local')
+        args[1].mkdir(parents=True)
+    monkeypatch.setattr(cli.vlm_lib, 'convert_pdf_vlm', transcribe)
+    monkeypatch.setattr(cli.pdf2md, 'convert_pdf', local)
+    monkeypatch.setattr(cli.mark2epub, 'convert_to_epub',
+                        lambda work, out, **kw: make_epub(out / kw['epub_filename']))
+    original_filter = cli.chapter_filter.filter_epub
+    def filter_once(src, dst, cfg, **kwargs):
+        observed['filter'].append(str(src))
+        return original_filter(src, dst, cfg, classifier)
+    monkeypatch.setattr(cli.chapter_filter, 'filter_epub', filter_once)
+    monkeypatch.setattr(sys, 'argv', ['main.py', str(source), str(output), '--yes', *flags])
+    cli.main()
+    assert observed['transcription'] == ['vision' if vision else 'local']
+    assert len(observed['filter']) == bool(flags)
+    result = output / 'Beat' / 'Beat #250.epub'
+    assert len(cli.chapter_filter.read_epub(result)[3]) == (1 if flags else 3)

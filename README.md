@@ -316,20 +316,9 @@ export PDF2EPUB_VLM_MAX_RETRIES=2
 ./scripts/pdf2epub.sh ./issue.pdf ./output --vlm --title '{stem}'
 ```
 
-To keep only high-confidence complete editorial articles, add `--articles-only`:
-
-```bash
-./scripts/pdf2epub.sh ./issue.pdf ./output --vlm --articles-only --title '{stem}'
-```
-
-This performs one text-only classification pass over the inferred chapter
-headings and excerpts (it does not resend page images). It keeps only candidates
-classified as complete articles with at least 90% confidence; ads, contents,
-copyright/masthead pages, uncertain items, and apparent article fragments are
-excluded. The choice is whole-chapter, so it will not cut pages from the middle
-of a selected chapter. `article-filter.json` records each decision for review.
-Keep the full transcript with `--keep-intermediates` if you want to inspect the
-source text alongside that report. This mode currently requires `--vlm`.
+To keep substantial articles and drop blurbs, teasers, ads and contents pages,
+add `--articles-only`. See [article filtering](#article-filtering-pdf-or-existing-epub)
+for PDF and existing-EPUB examples.
 
 Each page request has a 120-second hard deadline and up to two retries by
 default. Timed-out pages and empty transcriptions are retried; if a page still
@@ -350,24 +339,26 @@ kept as `<pdf-stem>.md`. The PDF's first page is rendered as the EPUB cover and
 is omitted from the article text. This path still does not extract or place
 in-body figures, and complex tables depend on the model's Markdown output.
 
-### Substantive chapter pass (PDF or existing EPUB)
+### Article filtering (PDF or existing EPUB)
 
-`--substantive-only` is an optional **second, text-only pipeline** over the finished
-EPUB. It drops product announcements/spec blurbs, news roundups, download catalogs,
+`--articles-only` runs one optional **text-only chapter filter** over the finished
+EPUB. `--substantive-only` remains a compatibility alias for exactly the same
+filter; passing both still runs it only once. It drops product announcements/spec
+blurbs, news roundups, download catalogs,
 teasers, issue previews, ads, contents/navigator pages and other non-reading matter.
 It keeps developed analysis/interviews, useful tutorials, and actual hands-on
 reviews. Long collections of blurbs are not articles; short useful tutorials can be.
 
 ```bash
 # Add to a new VLM conversion (also works after local OCR or --skip-md):
-./scripts/pdf2epub.sh issue.pdf ./output --vlm --substantive-only --yes
+./scripts/pdf2epub.sh issue.pdf ./output --vlm --articles-only --yes
 
 # Filter an already-converted EPUB without rendering/transcribing the PDF again:
-./scripts/pdf2epub.sh './Beat Magazine #20260250.epub' ./articles --substantive-only
+./scripts/pdf2epub.sh './Beat Magazine #20260250.epub' ./articles --articles-only
 # Result: ./articles/Beat Magazine #20260250.epub
 
 # Native CLI, no output directory: writes issue-substantive.epub beside the source.
-python main.py issue.epub --substantive-only
+python main.py issue.epub --articles-only
 ```
 
 Uses the existing `PDF2EPUB_VLM_*` text API settings and `COMMANDCODE_TOKEN` fallback;
@@ -376,10 +367,14 @@ separate bounded text request, concurrently up to `PDF2EPUB_VLM_CONCURRENCY`.
 Classification uses up to 18,000 characters of opening/ending text and at least
 16,384 output tokens (including reasoning). Only `kind=article` with confidence
 >=0.80 is included. This confidence is a model judgment, not calibrated certainty.
-Unlike `--articles-only`, this pass does not require a chapter to have both its own
-opening and conclusion: substantive continuation chapters can stay.
+A chapter does not need both its own opening and conclusion: substantive
+continuation chapters can stay. This replaces the old completeness-only filter;
+there is no separate earlier 90%-confidence completeness gate. Filtering also
+works after local OCR or with retained Markdown, without requiring `--vlm`.
 
-The adjacent `*.substantive-filter.json` records **every chapter's decision and
+For output/cache compatibility with 0.3.9, existing EPUBs without an explicit
+output directory still use the `-substantive.epub` suffix, and the adjacent
+`*.substantive-filter.json` records **every chapter's decision and
 reason**, survives normal work-directory cleanup, and checkpoints completed calls.
 An unchanged source/model/prompt can resume without reclassifying completed
 chapters. Any API/parse failure or zero retained chapters leaves the EPUB untouched.
@@ -390,3 +385,13 @@ navigation and legacy NCX are updated together. Cover, retained article content,
 styles and images are preserved. This pass cannot split merged stories or trim
 blurbs inside an otherwise retained chapter. Review a representative issue before
 large batch runs. Existing behavior remains unchanged without the flag.
+
+The launcher prints the effective converter flags before starting Docker, including
+its automatic `--yes`. Values are shell-quoted to make spaces and literal
+placeholders unambiguous, for example:
+
+```text
+Converter flags: --yes --vlm --articles-only --title \{stem\}
+```
+
+Docker environment arguments and API-key values are not included in that diagnostic.
