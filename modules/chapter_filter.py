@@ -296,6 +296,7 @@ def filter_epub(source, destination, config, classifier=classify_article_chapter
             if backup.exists():
                 raise VlmError(f'Refusing to overwrite backup: {backup}')
             shutil.copy2(source, backup)
+        temporary.chmod(source.stat().st_mode & 0o777)
         temporary.replace(destination)
     finally:
         temporary.unlink(missing_ok=True)

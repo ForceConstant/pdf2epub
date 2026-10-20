@@ -60,9 +60,11 @@ def test_filter_updates_all_navigation_preserves_cover_and_source(tmp_path):
     source, dest = tmp_path / 'original.epub', tmp_path / 'filtered.epub'
     make_epub(source)
     original = source.read_bytes()
+    source.chmod(0o640)
     report = filter_epub(source, dest, CONFIG, classifier)
     assert [r['included'] for r in report['chapters']] == [False, True, False]
     assert source.read_bytes() == original
+    assert dest.stat().st_mode & 0o777 == 0o640
     assert [c['title'] for c in read_epub(dest)[3]] == ['When producers come under fire due to the EU AI Act']
     with zipfile.ZipFile(dest) as z, zipfile.ZipFile(source) as src:
         assert z.infolist()[0].filename == 'mimetype'
