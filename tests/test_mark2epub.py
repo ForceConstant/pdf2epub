@@ -135,3 +135,57 @@ def test_void_normalization_preserves_code_comments_attributes_and_valid_markup(
     source = '<p>Text &amp; prose &lt;br&gt;</p><!-- <br> -->\n<img alt="a > b" src="a.jpg"><br /><hr>\n<pre>&lt;br&gt;</pre><script>const x = "<br>";</script>'
     output = normalize_html_voids(source)
     assert output == source.replace('<img alt="a > b" src="a.jpg">', '<img alt="a > b" src="a.jpg" />').replace('<hr>', '<hr />')
+
+
+def test_kickstarter_currency_and_bold_boundaries_are_preserved(tmp_path):
+    from xml.etree import ElementTree as ET
+    source = ('**A total of 3,300 backers pledged $178,173!** '
+              'The prior record ended at $152,028. Other tiers cost $10 or $20.')
+    document, _ = mark2epub.get_chapter_XML(tmp_path, 'fundraiser.md', [], content=source)
+    root = ET.fromstring(document)
+    text = ''.join(root.itertext())
+    assert '$178,173!' in text and '$152,028' in text
+    assert '$10 or $20' in text
+    assert root.find('.//{http://www.w3.org/1999/xhtml}strong').text.endswith('$178,173!')
+    assert not root.findall('.//{http://www.w3.org/1998/Math/MathML}math')
+
+
+def test_math_is_confined_to_text_not_markup_attributes_or_code():
+    from xml.etree import ElementTree as ET
+    source = ('<p><a href="https://example.invalid/$asset$">Link</a> '
+              '<strong>$unfinished</strong> text $y+1$.</p>'
+              '<pre><code>$x^2$ and $$y$$</code></pre><!-- $comment$ -->')
+    output = mark2epub.convert_math_to_mathml(source)
+    root = ET.fromstring('<root>' + output + '</root>')
+    assert 'href="https://example.invalid/$asset$"' in output
+    assert '<strong>$unfinished</strong>' in output
+    assert '<pre><code>$x^2$ and $$y$$</code></pre>' in output
+    assert '<!-- $comment$ -->' in output
+    assert len(root.findall('.//{http://www.w3.org/1998/Math/MathML}math')) == 1
+
+
+def test_real_inline_and_display_math_remain_supported_with_html_entities():
+    from xml.etree import ElementTree as ET
+    source = '<p>Inline $x &lt; y$ and $5+5$.</p><p>$$x^2 + y^2$$</p>'
+    output = mark2epub.convert_math_to_mathml(source)
+    root = ET.fromstring('<root>' + output + '</root>')
+    maths = root.findall('.//{http://www.w3.org/1998/Math/MathML}math')
+    assert len(maths) == 3
+    assert [node.get('display') for node in maths] == ['inline', 'inline', 'block']
+    assert root.find('div').get('class') == 'math-display'
+    assert not root.findall('.//p/div')
+    assert any(node.text == '<' for node in maths[0].iter())
+
+
+def test_literal_escaped_dollars_and_existing_math_are_not_rewritten():
+    source = (r'<p>Costs \$5 and \$10.</p>'
+              '<math xmlns="http://www.w3.org/1998/Math/MathML"><mtext>$literal$</mtext></math>')
+    assert mark2epub.convert_math_to_mathml(source) == source
+
+
+def test_failed_math_conversion_preserves_original_text(monkeypatch):
+    def invalid(*args, **kwargs):
+        return '<math><unclosed></math>'
+    monkeypatch.setattr(mark2epub.latex2mathml.converter, 'convert', invalid)
+    source = '<p>Keep $x^2$ exactly when conversion fails.</p>'
+    assert mark2epub.convert_math_to_mathml(source) == source

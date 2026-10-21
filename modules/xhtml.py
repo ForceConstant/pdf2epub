@@ -51,3 +51,59 @@ def normalize_html_voids(source):
     for start, end, replacement in reversed(edits):
         source = source[:start] + replacement + source[end:]
     return source
+
+
+def html_text_ranges(source):
+    """Return text-only source ranges, excluding code, scripts and existing math.
+
+    Adjacent entity/data callbacks are merged, but ranges never cross HTML tags
+    or attributes. Offsets refer to the original string so untouched markup is
+    preserved exactly rather than reserialized by an HTML parser.
+    """
+    offsets = [0] + [i + 1 for i, char in enumerate(source) if char == '\n']
+    ranges = []
+    excluded = {'pre', 'code', 'script', 'style', 'math'}
+
+    class TextRanges(HTMLParser):
+        depth = 0
+
+        def add(self, length):
+            if self.depth:
+                return
+            line, column = self.getpos()
+            start = offsets[line - 1] + column
+            end = start + length
+            if ranges and ranges[-1][1] == start:
+                ranges[-1] = (ranges[-1][0], end)
+            else:
+                ranges.append((start, end))
+
+        def handle_starttag(self, tag, attrs):
+            if tag.rsplit(':', 1)[-1] in excluded:
+                self.depth += 1
+
+        def handle_endtag(self, tag):
+            if tag.rsplit(':', 1)[-1] in excluded:
+                self.depth = max(0, self.depth - 1)
+
+        def handle_startendtag(self, tag, attrs):
+            pass
+
+        def handle_data(self, data):
+            self.add(len(data))
+
+        def entity(self, name, prefix_length):
+            line, column = self.getpos()
+            end = offsets[line - 1] + column + prefix_length + len(name)
+            self.add(prefix_length + len(name) + (source[end:end + 1] == ';'))
+
+        def handle_entityref(self, name):
+            self.entity(name, 1)
+
+        def handle_charref(self, name):
+            self.entity(name, 2)
+
+    parser = TextRanges(convert_charrefs=False)
+    parser.feed(source)
+    parser.close()
+    return ranges

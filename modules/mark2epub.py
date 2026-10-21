@@ -1,4 +1,6 @@
 import markdown
+from html import unescape
+from xml.etree import ElementTree as ET
 import os
 from xml.dom import minidom
 import zipfile
@@ -14,7 +16,7 @@ from urllib.parse import quote
 from xml.sax.saxutils import escape as xml_escape, quoteattr
 import latex2mathml.converter
 from modules import metadata as metadata_lib
-from modules.xhtml import normalize_html_voids
+from modules.xhtml import normalize_html_voids, html_text_ranges
 
 def get_user_input(prompt: str, default: str = "") -> str:
     """Get user input with a default value."""
@@ -457,49 +459,60 @@ def get_TOCNCX_XML(markdown_filenames, uid="", title="", chapter_titles=None):
     return toc_ncx
 
 def convert_math_to_mathml(html_text: str) -> str:
-    """Replace LaTeX math expressions in HTML with MathML, skipping code blocks."""
-    # Mask <pre>/<code> blocks so their $ delimiters are never treated as math
-    placeholders = {}
-    counter = [0]
+    """Convert delimited math only within text, never across HTML markup.
 
-    def mask(m):
-        key = f"\x00MASK{counter[0]}\x00"
-        counter[0] += 1
-        placeholders[key] = m.group(0)
-        return key
+    Inline delimiters follow conventional Markdown math rules: no opening or
+    closing whitespace, escaped dollars stay literal, and a closing dollar may
+    not precede a digit. This keeps prices such as '$20 and $30' as currency.
+    """
+    pattern = re.compile(
+        r'(?<![\\$])\$\$(?!\$)(?P<display>.*?)'
+        r'(?<!\\)\$\$(?!\$)'
+        r'|(?<![\\$])\$(?![\s$])(?P<inline>[^\n$]*?)'
+        r'(?<![\\\s])\$(?![\d$])',
+        flags=re.DOTALL,
+    )
 
-    masked = re.sub(r'<pre[\s\S]*?</pre>|<code[\s\S]*?</code>', mask, html_text, flags=re.DOTALL)
-
-    def try_convert(latex):
+    def try_convert(latex, display=False):
         try:
-            return latex2mathml.converter.convert(latex)
+            mathml = latex2mathml.converter.convert(
+                unescape(latex), display='block' if display else 'inline'
+            )
+            ET.fromstring(mathml)
+            return mathml
         except Exception:
             return None
 
-    # Standalone display math that Markdown wrapped in <p>: replace the whole
-    # paragraph to avoid invalid XHTML like <p><div>...</div></p>
-    def replace_display_paragraph(m):
-        mathml = try_convert(m.group(1))
-        return f'<div class="math-display">{mathml}</div>' if mathml else m.group(0)
+    def replace(match):
+        display = match.group('display') is not None
+        latex = match.group('display') if display else match.group('inline')
+        mathml = try_convert(latex, display)
+        if mathml is None:
+            return match.group(0)
+        style = 'math-display' if display else 'math-inline'
+        return f'<span class="{style}">{mathml}</span>'
 
-    # Remaining $$...$$ (inside phrasing content): use <span> to stay valid
-    def replace_display_inline(m):
-        mathml = try_convert(m.group(1))
-        return f'<span class="math-display">{mathml}</span>' if mathml else m.group(0)
+    edits = []
+    for start, end in html_text_ranges(html_text):
+        text = html_text[start:end]
+        # Preserve standalone display math as a block without nesting a div
+        # inside p. Other expressions remain valid phrasing content.
+        block = pattern.fullmatch(text.strip())
+        if (block and block.group('display') is not None
+                and html_text[max(0, start - 3):start] == '<p>'
+                and html_text[end:end + 4] == '</p>'):
+            mathml = try_convert(block.group('display'), True)
+            if mathml:
+                edits.append((start - 3, end + 4,
+                              f'<div class="math-display">{mathml}</div>'))
+                continue
+        converted = pattern.sub(replace, text)
+        if converted != text:
+            edits.append((start, end, converted))
+    for start, end, replacement in reversed(edits):
+        html_text = html_text[:start] + replacement + html_text[end:]
+    return html_text
 
-    # Inline $...$
-    def replace_inline(m):
-        mathml = try_convert(m.group(1))
-        return f'<span class="math-inline">{mathml}</span>' if mathml else m.group(0)
-
-    masked = re.sub(r'<p>\s*\$\$(.*?)\$\$\s*</p>', replace_display_paragraph, masked, flags=re.DOTALL)
-    masked = re.sub(r'\$\$(.*?)\$\$', replace_display_inline, masked, flags=re.DOTALL)
-    masked = re.sub(r'(?<!\$)\$(?!\$)(.*?)(?<!\$)\$(?!\$)', replace_inline, masked, flags=re.DOTALL)
-
-    for key, original in placeholders.items():
-        masked = masked.replace(key, original)
-
-    return masked
 
 def get_chapter_XML(work_dir: str, md_filename: str, css_filenames: list[str], content: Optional[str] = None) -> tuple[str, list[str]]:
     """

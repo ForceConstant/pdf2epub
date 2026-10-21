@@ -414,3 +414,11 @@ that classification succeeded. Check the process exit status and adjacent report
 Raw HTML void tags such as `<br>` in Markdown tables are normalized to valid
 XHTML when generating chapters. Existing EPUBs with the same void-tag defect can
 be normalized in memory for filtering without changing the original source.
+
+Math conversion operates only on HTML text ranges, never across tags/attributes
+or inside code, scripts, comments or existing MathML. Ordinary prices such as
+`$10 and $20` remain currency; genuine `$x^2$` and `$$x^2$$` expressions still
+become MathML. Inline math delimiters cannot border whitespace or close immediately
+before a digit. If an older staged EPUB already contains corrupted MathML, rebuild
+from retained Markdown with `--skip-md --articles-only`; don't retranscribe the PDF
+or try to guess lost markup from the damaged EPUB.

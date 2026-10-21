@@ -30,7 +30,8 @@ def verify_navigation_output(directory):
     for name, title in zip(filenames, titles):
         (work / name).write_text(
             f"# {title}\n\nArticle: {title}.\n\n"
-            "| Model | Type |\n| --- | --- |\n| Aurora<br>Beat | Dual-Röhren |\n",
+            "| Model | Type |\n| --- | --- |\n| Aurora<br>Beat | Dual-Röhren |\n\n"
+            "**Backers pledged $178,173!** The prior record was $152,028.\n",
             encoding="utf-8",
         )
         chapters.append({"markdown": name, "title": title, "css": ""})
@@ -72,6 +73,9 @@ def verify_navigation_output(directory):
             chapter = ET.fromstring(archive.read("OPS/" + target.path))
             assert chapter.find(".//h:h1", xhtml_ns).text == title
             assert len(chapter.findall('.//h:br', xhtml_ns)) == 1
+            assert '$178,173!' in ''.join(chapter.itertext())
+            assert '$152,028' in ''.join(chapter.itertext())
+            assert not chapter.findall('.//{http://www.w3.org/1998/Math/MathML}math')
 
 
 def test_navigation_targets_resolve_for_special_source_filenames(tmp_path):
