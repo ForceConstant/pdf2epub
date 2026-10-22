@@ -190,3 +190,24 @@ def test_unrepairable_xhtml_logs_filter_start_before_failing(tmp_path, capsys):
         filter_epub(source, dest, CONFIG, classifier)
     assert 'Article filter enabled: reading' in capsys.readouterr().out
     assert not dest.exists()
+
+
+def test_existing_epub_with_economist_entities_filters_without_changing_source(tmp_path, capsys):
+    source, dest = tmp_path / 'original.epub', tmp_path / 'filtered.epub'
+    make_epub(source)
+    with zipfile.ZipFile(source) as archive:
+        entries = [(i, archive.read(i)) for i in archive.infolist()]
+    with zipfile.ZipFile(source, 'w') as archive:
+        for info, data in entries:
+            if info.filename == 'OPS/article.xhtml':
+                data = data.replace(b'Developed analysis.',
+                                    b'Sources: S&P; Thompson Lloyd &amp; Ewart; &nbsp; &unknown;')
+            archive.writestr(info, data)
+    original = source.read_bytes()
+    filter_epub(source, dest, CONFIG, classifier)
+    assert source.read_bytes() == original
+    chapters = read_epub(dest)[3]
+    assert len(chapters) == 1
+    assert 'Sources: S&P; Thompson Lloyd & Ewart;' in chapters[0]['text']
+    assert '&unknown;' in chapters[0]['text']
+    assert 'Normalized HTML entities in OPS/article.xhtml' in capsys.readouterr().out

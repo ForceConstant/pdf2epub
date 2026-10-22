@@ -189,3 +189,36 @@ def test_failed_math_conversion_preserves_original_text(monkeypatch):
     monkeypatch.setattr(mark2epub.latex2mathml.converter, 'convert', invalid)
     source = '<p>Keep $x^2$ exactly when conversion fails.</p>'
     assert mark2epub.convert_math_to_mathml(source) == source
+
+
+def test_economist_sources_and_html_entities_produce_valid_xhtml(tmp_path):
+    from xml.etree import ElementTree as ET
+    source = ('# Sources\n\nSources: CME Group; FactSet; S&P; '
+              'Thompson Lloyd &amp; Ewart; USDA.\n\n'
+              '<p title="A&nbsp;B &quot;quoted&quot; &unknown;">'
+              'A&nbsp;B &copy; &NotEqualTilde; &unknown; '
+              '&#169; &#xA9; &lt;br&gt;</p>')
+    document, _ = mark2epub.get_chapter_XML(tmp_path, 'sources.md', [], content=source)
+    root = ET.fromstring(document)
+    text = ''.join(root.itertext())
+    assert 'S&P; Thompson Lloyd & Ewart; USDA.' in text
+    assert 'A\u00a0B © ≂̸ &unknown; © © <br>' in text
+    assert root.find('.//{http://www.w3.org/1999/xhtml}p[@title]').get('title') == 'A\u00a0B "quoted" &unknown;'
+
+
+def test_entity_normalization_preserves_escaped_text_attributes_and_literal_sections():
+    from xml.etree import ElementTree as ET
+    from modules.xhtml import normalize_html_entities
+    source = ('<root><a href="https://example.invalid/?a=1&b=2" '
+              'title="&quot;&lt;&gt;&apos;&amp;">R&D S&P; &unknown; '
+              '&nbsp; &copy; &#160; &#xA0; &amp;nbsp;</a>'
+              '<!-- &nbsp; &raw; --><![CDATA[&nbsp; &raw;]]>'
+              '<?literal &nbsp; &raw;?></root>')
+    output = normalize_html_entities(source)
+    root = ET.fromstring(output)
+    assert root.find('a').get('href') == 'https://example.invalid/?a=1&b=2'
+    assert root.find('a').get('title') == '\"<>\'&'
+    assert root.find('a').text == 'R&D S&P; &unknown; \u00a0 © \u00a0 \u00a0 &nbsp;'
+    for literal in ('<!-- &nbsp; &raw; -->', '<![CDATA[&nbsp; &raw;]]>', '<?literal &nbsp; &raw;?>'):
+        assert literal in output
+    assert normalize_html_entities(output) == output

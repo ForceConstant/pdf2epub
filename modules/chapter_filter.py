@@ -19,7 +19,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 from modules.vlm import VlmError, classify_article_chapters
-from modules.xhtml import normalize_html_voids
+from modules.xhtml import normalize_html_voids, normalize_html_entities
 
 OPF = 'http://www.idpf.org/2007/opf'
 XHTML = 'http://www.w3.org/1999/xhtml'
@@ -82,11 +82,17 @@ def read_epub(path):
                 ET.fromstring(data)
             except ET.ParseError as original:
                 try:
-                    data = normalize_html_voids(data.decode('utf-8')).encode('utf-8')
+                    decoded = data.decode('utf-8')
+                    voids_fixed = normalize_html_voids(decoded)
+                    normalized = normalize_html_entities(voids_fixed)
+                    data = normalized.encode('utf-8')
                     ET.fromstring(data)
                 except (ET.ParseError, UnicodeError, ValueError) as exc:
                     raise VlmError(f'Invalid XHTML in {item.filename}: {original}') from exc
-                print(f'Normalized HTML void elements in {item.filename}', flush=True)
+                if voids_fixed != decoded:
+                    print(f'Normalized HTML void elements in {item.filename}', flush=True)
+                if normalized != voids_fixed:
+                    print(f'Normalized HTML entities in {item.filename}', flush=True)
         repaired.append((item, data))
     entries = repaired
     files = {item.filename: data for item, data in entries}

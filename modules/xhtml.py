@@ -1,10 +1,12 @@
-"""Normalize HTML void elements carried through raw Markdown into XHTML.
+"""Normalize HTML void elements and character references for XML-safe XHTML.
 
 Python-Markdown's XHTML serializer handles generated elements, but raw HTML is
 passed through unchanged. Patch actual start/end tags using parser offsets so
 attributes, prose, escaped code examples, comments and script text stay intact.
 """
+from html.entities import html5
 from html.parser import HTMLParser
+import re
 
 VOID_ELEMENTS = frozenset({
     'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta',
@@ -51,6 +53,36 @@ def normalize_html_voids(source):
     for start, end, replacement in reversed(edits):
         source = source[:start] + replacement + source[end:]
     return source
+
+
+def normalize_html_entities(source):
+    """Make HTML character references XML-safe without reparsing the markup.
+
+    Preserve XML's five entities and numeric references exactly. Convert known
+    HTML5 names to numeric references (including multi-codepoint entities), and
+    escape unknown/literal ampersands rather than dropping publication text.
+    Never decode the entire document: doing so would turn escaped code into
+    markup and quotes into attribute delimiters. Comments/CDATA/PIs are literal.
+    """
+    pattern = re.compile(
+        r'<!--.*?-->|<!\[CDATA\[.*?\]\]>|<\?.*?\?>|'
+        r'&(?:([A-Za-z][A-Za-z0-9]*);|#(?:[0-9]+|x[0-9A-Fa-f]+);)?',
+        re.DOTALL,
+    )
+
+    def replace(match):
+        token = match.group()
+        if not token.startswith('&'):
+            return token
+        name = match.group(1)
+        if token.startswith('&#') or name in {'amp', 'lt', 'gt', 'quot', 'apos'}:
+            return token
+        value = html5.get(name + ';') if name else None
+        if value is not None:
+            return ''.join(f'&#{ord(char)};' for char in value)
+        return '&amp;' + token[1:]
+
+    return pattern.sub(replace, source)
 
 
 def html_text_ranges(source):

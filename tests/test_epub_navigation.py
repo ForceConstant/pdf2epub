@@ -31,7 +31,8 @@ def verify_navigation_output(directory):
         (work / name).write_text(
             f"# {title}\n\nArticle: {title}.\n\n"
             "| Model | Type |\n| --- | --- |\n| Aurora<br>Beat | Dual-Röhren |\n\n"
-            "**Backers pledged $178,173!** The prior record was $152,028.\n",
+            "**Backers pledged $178,173!** The prior record was $152,028.\n"
+            "Sources: S&P; Thompson Lloyd &amp; Ewart; &nbsp; &copy; &unknown;.\n",
             encoding="utf-8",
         )
         chapters.append({"markdown": name, "title": title, "css": ""})
@@ -75,6 +76,8 @@ def verify_navigation_output(directory):
             assert len(chapter.findall('.//h:br', xhtml_ns)) == 1
             assert '$178,173!' in ''.join(chapter.itertext())
             assert '$152,028' in ''.join(chapter.itertext())
+            assert 'S&P; Thompson Lloyd & Ewart;' in ''.join(chapter.itertext())
+            assert '© &unknown;.' in ''.join(chapter.itertext())
             assert not chapter.findall('.//{http://www.w3.org/1998/Math/MathML}math')
 
 
