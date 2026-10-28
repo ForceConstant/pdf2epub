@@ -176,7 +176,80 @@ def test_existing_epub_with_raw_html_breaks_filters_without_changing_source(tmp_
     assert 'Normalized HTML void elements in OPS/article.xhtml' in output
 
 
-def test_unrepairable_xhtml_logs_filter_start_before_failing(tmp_path, capsys):
+FIXTURES = Path(__file__).resolve().parent / 'fixtures'
+
+
+def test_ocr_pseudo_tags_are_escaped_and_the_article_is_retained(tmp_path, capsys):
+    """Regression fixture: Retro Gamer #20260291 OPS/s00089 + s00091/s00093/s00095.
+
+    OCR layout labels (<C64>, <INTRO>, <INFO ... />, <BODY>) reached Markdown as
+    raw inline HTML. They must survive as literal text instead of aborting the
+    whole book.
+    """
+    source, dest = tmp_path / 'original.epub', tmp_path / 'filtered.epub'
+    make_epub(source)
+    fixture = (FIXTURES / 'retro-gamer-20260291-pseudo-tags.xhtml').read_text()
+    with zipfile.ZipFile(source) as archive:
+        entries = [(i, archive.read(i)) for i in archive.infolist()]
+    with zipfile.ZipFile(source, 'w') as archive:
+        for info, data in entries:
+            if info.filename == 'OPS/article.xhtml':
+                body = ('<h1>When producers come under fire due to the EU AI Act</h1>'
+                        '<p>Developed analysis.</p>' + fixture)
+                data = (f'<html xmlns="{XHTML}"><head><title>Head must not count</title>'
+                        f'</head><body>{body}</body></html>').encode()
+            archive.writestr(info, data)
+    original = source.read_bytes()
+    filter_epub(source, dest, CONFIG, classifier)
+    assert source.read_bytes() == original
+    chapters = read_epub(dest)[3]
+    assert [c['title'] for c in chapters] == [
+        'When producers come under fire due to the EU AI Act']
+    text = chapters[0]['text']
+    for literal in ('<--- <C64> THINGS START OUT EASY',
+                    '<INTRO> ANYONE WHO SPENDS FOUR YEARS',
+                    '<INFO FORMAT: GAME BOY COLOR CREDITS',
+                    "<BODY> There's a written law"):
+        assert literal in text
+    with zipfile.ZipFile(dest) as archive:
+        for name in archive.namelist():
+            if name.endswith('.xhtml'):
+                ET.fromstring(archive.read(name))
+        assert b'&lt;INFO' in archive.read('OPS/article.xhtml')
+    output = capsys.readouterr().out
+    assert 'Repaired malformed XHTML tags in OPS/article.xhtml' in output
+    assert 'Substantive chapters: 1/3' in output
+
+
+def test_genuinely_unreadable_xhtml_is_reported_and_excluded(tmp_path, capsys):
+    """An unrecoverable member must not abort the rest of the book."""
+    source, dest = tmp_path / 'original.epub', tmp_path / 'filtered.epub'
+    make_epub(source)
+    with zipfile.ZipFile(source) as archive:
+        entries = [(i, archive.read(i)) for i in archive.infolist()]
+    with zipfile.ZipFile(source, 'w') as archive:
+        for info, data in entries:
+            if info.filename == 'OPS/blurb.xhtml':
+                data = data.replace(b'Available now.', b'Available \x00 now.')
+            archive.writestr(info, data)
+    filter_epub(source, dest, CONFIG, classifier)
+    report = json.loads(dest.with_suffix('.substantive-filter.json').read_text())
+    rows = {row['path']: row for row in report['chapters']}
+    assert rows['OPS/blurb.xhtml']['kind'] == 'unreadable'
+    assert rows['OPS/blurb.xhtml']['included'] is False
+    assert 'Unrecoverable XHTML' in rows['OPS/blurb.xhtml']['reason']
+    with zipfile.ZipFile(dest) as archive:
+        assert 'OPS/blurb.xhtml' not in archive.namelist()
+        assert b'blurb.xhtml' not in archive.read('OPS/package.opf')
+        for name in archive.namelist():
+            if name.endswith('.xhtml'):
+                ET.fromstring(archive.read(name))
+    output = capsys.readouterr().out
+    assert 'Skipping unrepairable XHTML OPS/blurb.xhtml' in output
+    assert 'Skipped 1 unreadable XHTML chapter(s): OPS/blurb.xhtml' in output
+
+
+def test_stray_end_tag_is_escaped_as_text_not_fatal(tmp_path, capsys):
     source, dest = tmp_path / 'original.epub', tmp_path / 'filtered.epub'
     make_epub(source)
     with zipfile.ZipFile(source) as archive:
@@ -184,12 +257,12 @@ def test_unrepairable_xhtml_logs_filter_start_before_failing(tmp_path, capsys):
     with zipfile.ZipFile(source, 'w') as archive:
         for info, data in entries:
             if info.filename == 'OPS/article.xhtml':
-                data = data.replace(b'</p>', b'</wrong>')
+                data = data.replace(b'Developed analysis.', b'Developed </wrong> analysis.')
             archive.writestr(info, data)
-    with pytest.raises(VlmError, match='Invalid XHTML in OPS/article.xhtml'):
-        filter_epub(source, dest, CONFIG, classifier)
+    filter_epub(source, dest, CONFIG, classifier)
+    chapters = read_epub(dest)[3]
+    assert 'Developed </wrong> analysis.' in chapters[0]['text']
     assert 'Article filter enabled: reading' in capsys.readouterr().out
-    assert not dest.exists()
 
 
 def test_existing_epub_with_economist_entities_filters_without_changing_source(tmp_path, capsys):

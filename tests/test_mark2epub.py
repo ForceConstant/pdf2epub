@@ -222,3 +222,19 @@ def test_entity_normalization_preserves_escaped_text_attributes_and_literal_sect
     for literal in ('<!-- &nbsp; &raw; -->', '<![CDATA[&nbsp; &raw;]]>', '<?literal &nbsp; &raw;?>'):
         assert literal in output
     assert normalize_html_entities(output) == output
+
+
+def test_chapter_xhtml_escapes_ocr_pseudo_tags(tmp_path):
+    """Generator layer: Markdown passes unknown <TAG> text through as raw HTML."""
+    import xml.etree.ElementTree as ET
+    fixture = (Path(__file__).resolve().parent / 'fixtures'
+               / 'retro-gamer-20260291-pseudo-tags.xhtml').read_text()
+    body = '\n\n'.join(line for line in fixture.splitlines() if line.strip())
+    chapter = tmp_path / 'chapter.md'
+    chapter.write_text('# NEW GAMES NEEDED\n\n' + body + '\n', encoding='utf-8')
+    xhtml, _ = mark2epub.get_chapter_XML(str(tmp_path), chapter.name, [])
+    root = ET.fromstring(xhtml)
+    text = ' '.join(' '.join(part.split()) for part in root.itertext() if part.strip())
+    assert '<C64> THINGS START OUT EASY' in text
+    assert '<INFO FORMAT: GAME BOY COLOR CREDITS' in text
+    assert "<BODY> There's a written law" in text

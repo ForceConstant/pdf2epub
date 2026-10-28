@@ -19,7 +19,8 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 from modules.vlm import VlmError, classify_article_chapters
-from modules.xhtml import normalize_html_voids, normalize_html_entities
+from modules.xhtml import (normalize_html_voids, normalize_html_entities,
+                           repair_mismatched_tags)
 
 OPF = 'http://www.idpf.org/2007/opf'
 XHTML = 'http://www.w3.org/1999/xhtml'
@@ -76,6 +77,7 @@ def read_epub(path):
             raise VlmError('EPUB contains a corrupt archive member')
         entries = [(item, archive.read(item)) for item in archive.infolist()]
     repaired = []
+    skipped = []
     for item, data in entries:
         if item.filename.endswith('.xhtml'):
             try:
@@ -85,16 +87,29 @@ def read_epub(path):
                     decoded = data.decode('utf-8')
                     voids_fixed = normalize_html_voids(decoded)
                     normalized = normalize_html_entities(voids_fixed)
-                    data = normalized.encode('utf-8')
+                    fixed, escaped_tags, inserted_end_tags = repair_mismatched_tags(
+                        normalized)
+                    data = fixed.encode('utf-8')
                     ET.fromstring(data)
-                except (ET.ParseError, UnicodeError, ValueError) as exc:
-                    raise VlmError(f'Invalid XHTML in {item.filename}: {original}') from exc
+                except (ET.ParseError, UnicodeError, ValueError):
+                    # Report and exclude only this member; the rest of the book
+                    # must still convert. Never drop it silently.
+                    skipped.append((item.filename, str(original)))
+                    print(f'Skipping unrepairable XHTML {item.filename}: {original}',
+                          flush=True)
+                    repaired.append((item, data))
+                    continue
                 if voids_fixed != decoded:
                     print(f'Normalized HTML void elements in {item.filename}', flush=True)
                 if normalized != voids_fixed:
                     print(f'Normalized HTML entities in {item.filename}', flush=True)
+                if escaped_tags or inserted_end_tags:
+                    print(f'Repaired malformed XHTML tags in {item.filename}: '
+                          f'{escaped_tags} pseudo-tag(s) escaped, '
+                          f'{inserted_end_tags} end tag(s) inserted', flush=True)
         repaired.append((item, data))
     entries = repaired
+    unreadable = {name for name, _ in skipped}
     files = {item.filename: data for item, data in entries}
     container = ET.fromstring(files['META-INF/container.xml'])
     package_path = next(node.attrib['full-path'] for node in container.iter()
@@ -112,7 +127,7 @@ def read_epub(path):
     for ref in spine:
         item = items[ref.attrib['idref']]
         path = _local_target(package_path, item.attrib['href'])
-        if path in covers or path in navs:
+        if path in covers or path in navs or path in unreadable:
             continue
         if item.get('media-type') != 'application/xhtml+xml':
             continue
@@ -135,12 +150,13 @@ def read_epub(path):
         title = ' '.join(heading.itertext()).strip() if heading is not None else ''
         chapters.append({'idref': ref.attrib['idref'], 'path': path,
                          'title': title or Path(path).stem, 'text': text})
-    return entries, package_path, package, chapters
+    return entries, package_path, package, chapters, skipped
 
 
 def validate_navigation(path):
     """Require both EPUB 3 and legacy navigation targets to exist in manifest."""
-    entries, package_path, package, _ = read_epub(path)
+    entries, package_path, package, _, skipped = read_epub(path)
+    unreadable = {name for name, _ in skipped}
     files = {item.filename: data for item, data in entries}
     manifest = package.find(f'{{{OPF}}}manifest')
     targets = {_local_target(package_path, item.attrib['href']) for item in manifest}
@@ -149,6 +165,8 @@ def validate_navigation(path):
                 and item.get('media-type') != 'application/x-dtbncx+xml'):
             continue
         document = _local_target(package_path, item.attrib['href'])
+        if document in unreadable:
+            continue
         root = ET.fromstring(files[document])
         for node in root.iter():
             tag = node.tag.rsplit('}', 1)[-1]
@@ -212,7 +230,7 @@ def filter_epub(source, destination, config, classifier=classify_article_chapter
     source, destination = Path(source), Path(destination)
     print(f'Article filter enabled: reading {source}', flush=True)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    entries, package_path, package, chapters = read_epub(source)
+    entries, package_path, package, chapters, skipped = read_epub(source)
     if not chapters:
         raise VlmError('EPUB has no text chapters to classify')
     report_path = destination.with_suffix('.substantive-filter.json')
@@ -227,14 +245,24 @@ def filter_epub(source, destination, config, classifier=classify_article_chapter
         if cached.get('signature') == signature:
             report = cached
     decisions = {row['path']: row for row in report['chapters']}
+    skipped_rows = {}
+    for path, reason in skipped:
+        skipped_rows[path] = {
+            'path': path, 'title': Path(path).stem, 'kind': 'unreadable',
+            'complete': False, 'confidence': 0.0,
+            'reason': f'Unrecoverable XHTML, chapter excluded: {reason}',
+            'included': False,
+        }
+        decisions[path] = skipped_rows[path]
     report['threshold'] = THRESHOLD
     for row in decisions.values():
         row['included'] = row['kind'] == 'article' and row['confidence'] >= THRESHOLD
     lock = threading.Lock()
 
     def persist():
-        report['chapters'] = [decisions[c['path']] for c in chapters
-                              if c['path'] in decisions]
+        rows = [decisions[c['path']] for c in chapters if c['path'] in decisions]
+        rows.extend(skipped_rows[path] for path in skipped_rows)
+        report['chapters'] = rows
         temporary = report_path.with_suffix('.json.tmp')
         temporary.write_text(json.dumps(report, indent=2, ensure_ascii=False) + '\n',
                              encoding='utf-8')
@@ -270,9 +298,11 @@ def filter_epub(source, destination, config, classifier=classify_article_chapter
             future.result()
     persist()
     dropped = {path for path, row in decisions.items() if not row['included']}
-    if len(dropped) == len(chapters):
+    if not any(chapter['path'] not in dropped for chapter in chapters):
         raise VlmError(f'No substantive chapters selected; source unchanged; see {report_path}')
-    ids = {chapter['idref'] for chapter in chapters if chapter['path'] in dropped}
+    manifest = package.find(f'{{{OPF}}}manifest')
+    ids = {node.attrib['id'] for node in manifest
+           if node.get('href') and _local_target(package_path, node.get('href')) in dropped}
     for parent_name in ('manifest', 'spine'):
         parent = package.find(f'{{{OPF}}}{parent_name}')
         for node in list(parent):
@@ -308,7 +338,7 @@ def filter_epub(source, destination, config, classifier=classify_article_chapter
             for item, data in entries:
                 if item.filename not in dropped and item.filename != 'mimetype':
                     archive.writestr(item, replacements.get(item.filename, data))
-        _, _, _, retained = read_epub(temporary)
+        _, _, _, retained, _ = read_epub(temporary)
         if [c['path'] for c in retained] != [c['path'] for c in chapters
                                             if c['path'] not in dropped]:
             raise VlmError('Filtered EPUB failed spine verification')
@@ -322,6 +352,9 @@ def filter_epub(source, destination, config, classifier=classify_article_chapter
         temporary.replace(destination)
     finally:
         temporary.unlink(missing_ok=True)
+    if skipped:
+        print(f'Skipped {len(skipped)} unreadable XHTML chapter(s): '
+              + ', '.join(path for path, _ in skipped), flush=True)
     print(f'\nSubstantive chapters: {len(retained)}/{len(chapters)}; report: {report_path}',
           flush=True)
     return report

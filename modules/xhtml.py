@@ -4,6 +4,7 @@ Python-Markdown's XHTML serializer handles generated elements, but raw HTML is
 passed through unchanged. Patch actual start/end tags using parser offsets so
 attributes, prose, escaped code examples, comments and script text stay intact.
 """
+from html import escape
 from html.entities import html5
 from html.parser import HTMLParser
 import re
@@ -139,3 +140,117 @@ def html_text_ranges(source):
     parser.feed(source)
     parser.close()
     return ranges
+
+
+# Element names the generator and EPUB assembly legitimately emit. XHTML is
+# case-sensitive, so anything outside this lowercase set is publication text,
+# not markup.
+KNOWN_ELEMENTS = frozenset("""
+a abbr address area article aside audio b bdi bdo blockquote body br button
+canvas caption cite code col colgroup data datalist dd del details dfn dialog
+div dl dt em embed fieldset figcaption figure footer form h1 h2 h3 h4 h5 h6
+head header hgroup hr html i iframe img input ins kbd label legend li link main
+map mark menu meta meter nav noscript object ol optgroup option output p param
+picture pre progress q rp rt ruby s samp script search section select slot small
+source span strong style sub summary sup table tbody td template textarea tfoot
+th thead time title tr track u ul var video wbr
+svg g defs symbol use image path rect circle ellipse line polyline polygon text
+tspan linearGradient radialGradient stop clipPath mask pattern marker
+math maction maligngroup malignmark menclose merror mfenced mfrac mglyph mi
+mlabeledtr mmultiscripts mn mo mover mpadded mphantom mroot mrow ms mspace
+msqrt mstyle msub msubsup msup mtable mtd mtext mtr munder munderover
+semantics annotation annotation-xml
+""".split())
+
+# Elements HTML implicitly closes before opening another of the same name.
+IMPLIED_END = frozenset({'p', 'li', 'dt', 'dd', 'tr', 'td', 'th', 'option'})
+# Block elements that cannot nest inside a paragraph.
+BLOCK_CLOSES_P = frozenset({
+    'address', 'article', 'aside', 'blockquote', 'details', 'div', 'dl',
+    'fieldset', 'figcaption', 'figure', 'footer', 'form', 'h1', 'h2', 'h3',
+    'h4', 'h5', 'h6', 'header', 'hgroup', 'hr', 'main', 'menu', 'nav', 'ol',
+    'p', 'pre', 'section', 'table', 'ul',
+})
+
+_TAG_NAME = re.compile(r'<\s*/?\s*([^\s/>]+)')
+
+
+def repair_mismatched_tags(source):
+    """Recover XHTML that raw OCR text turned into unbalanced markup.
+
+    Vision/OCR transcripts contain layout labels such as ``<INFO ...>``,
+    ``<INTRO>``, ``<BODY>`` and ``<C64>`` that Python-Markdown passes through
+    as raw inline HTML. Those names are not XHTML elements, so they are escaped
+    as literal text (text is preserved, never dropped). Real elements that are
+    left open or closed out of order are balanced by inserting end tags.
+
+    Returns ``(repaired, escaped_tags, inserted_end_tags)``. Callers still
+    validate the result with an XML parser; this function asserts nothing.
+    """
+    offsets = [0]
+    for line in source.splitlines(keepends=True):
+        offsets.append(offsets[-1] + len(line))
+    edits = []
+    stack = []
+    escaped = closed = 0
+
+    def opened_at():
+        line, column = parser.getpos()
+        return offsets[line - 1] + column
+
+    def escape_tag(start, end, raw):
+        nonlocal escaped
+        escaped += 1
+        edits.append((start, end, escape(raw)))
+
+    def close_top(position):
+        nonlocal closed
+        name = stack.pop()
+        edits.append((position, position, f'</{name}>'))
+        closed += 1
+
+    def raw_name(raw, fallback):
+        match = _TAG_NAME.match(raw)
+        return match.group(1) if match else fallback
+
+    class Repair(HTMLParser):
+        def handle_starttag(self, tag, attrs):
+            raw = self.get_starttag_text()
+            name = raw_name(raw, tag)
+            start = opened_at()
+            if name not in KNOWN_ELEMENTS:
+                escape_tag(start, start + len(raw), raw)
+                return
+            while stack and ((stack[-1] == name and name in IMPLIED_END)
+                             or (stack[-1] == 'p' and name in BLOCK_CLOSES_P)):
+                close_top(start)
+            stack.append(name)
+
+        def handle_startendtag(self, tag, attrs):
+            raw = self.get_starttag_text()
+            name = raw_name(raw, tag)
+            if name not in KNOWN_ELEMENTS:
+                start = opened_at()
+                escape_tag(start, start + len(raw), raw)
+
+        def handle_endtag(self, tag):
+            start = opened_at()
+            end = source.index('>', start) + 1
+            raw = source[start:end]
+            name = raw_name(raw, tag)
+            if name not in KNOWN_ELEMENTS or name not in stack:
+                escape_tag(start, end, raw)
+                return
+            while stack[-1] != name:
+                close_top(start)
+            stack.pop()
+
+    parser = Repair(convert_charrefs=False)
+    parser.feed(source)
+    parser.close()
+    position = len(source)
+    while stack:
+        close_top(position)
+    for start, end, replacement in reversed(edits):
+        source = source[:start] + replacement + source[end:]
+    return source, escaped, closed

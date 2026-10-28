@@ -16,7 +16,8 @@ from urllib.parse import quote
 from xml.sax.saxutils import escape as xml_escape, quoteattr
 import latex2mathml.converter
 from modules import metadata as metadata_lib
-from modules.xhtml import normalize_html_voids, normalize_html_entities, html_text_ranges
+from modules.xhtml import (normalize_html_voids, normalize_html_entities,
+                           html_text_ranges, repair_mismatched_tags)
 
 def get_user_input(prompt: str, default: str = "") -> str:
     """Get user input with a default value."""
@@ -547,6 +548,9 @@ def get_chapter_XML(work_dir: str, md_filename: str, css_filenames: list[str], c
     # Convert LaTeX math to MathML for EPUB readers
     html_text = convert_math_to_mathml(html_text)
     html_text = normalize_html_entities(normalize_html_voids(html_text))
+    # OCR layout labels such as <INFO ...> or <BODY> arrive as raw inline HTML
+    # from Markdown; escape them as text and balance any real element they broke.
+    html_text, _, _ = repair_mismatched_tags(html_text)
 
     # Generate XHTML wrapper
     xhtml = f"""<?xml version="1.0" encoding="UTF-8"?>
