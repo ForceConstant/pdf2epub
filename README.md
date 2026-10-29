@@ -422,3 +422,22 @@ become MathML. Inline math delimiters cannot border whitespace or close immediat
 before a digit. If an older staged EPUB already contains corrupted MathML, rebuild
 from retained Markdown with `--skip-md --articles-only`; don't retranscribe the PDF
 or try to guess lost markup from the damaged EPUB.
+
+### Article-free publications (0.3.15+)
+
+A completed `--articles-only` pass can legitimately select no chapters (for
+example, a publisher catalog made up of solicitations and previews). This now
+exits successfully with `Substantive chapters: 0/N; report: ...` and
+`Article filter complete: no qualifying articles; no EPUB produced; existing
+files unchanged.` It does **not** create an empty book, publish the unfiltered
+archive, or overwrite an existing destination. PDF conversion work files and
+checkpoints remain available for review.
+
+The adjacent `*.substantive-filter.json` records `status: "no_articles"`,
+`kept_chapters: 0`, the completed chapter decisions, and `output_written: false`.
+A published filtered archive instead records `status: "filtered"` and
+`output_written: true`. Interrupted/API-failed passes are not completed outcomes;
+a zero-selection pass with unreadable XHTML remains an error. Refiltering the
+same saved EPUB reuses matching cached decisions without paid retranscription.
+Automation must validate the completed report rather than treating any missing
+EPUB or partial report as success.

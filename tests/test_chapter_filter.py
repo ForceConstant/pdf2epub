@@ -91,14 +91,17 @@ def test_resume_and_signature_invalidation(tmp_path):
         filter_epub(source, dest, dict(CONFIG, model='changed'), no_call)
 
 
-def test_failure_and_empty_selection_leave_destination_unchanged(tmp_path):
+def test_empty_selection_is_completed_without_overwriting_destination(tmp_path):
     source, dest = tmp_path / 'original.epub', tmp_path / 'filtered.epub'
     make_epub(source)
     dest.write_bytes(b'existing-output')
     def reject(*args, **kwargs):
         return {0: dict(kind='non_article', complete=True, confidence=1, reason='Blurb')}
-    with pytest.raises(VlmError, match='No substantive chapters'):
-        filter_epub(source, dest, CONFIG, reject)
+    report = filter_epub(source, dest, CONFIG, reject)
+    assert report['status'] == 'no_articles'
+    assert report['output_written'] is False
+    assert report['kept_chapters'] == 0
+    assert report['total_chapters'] == 3
     assert dest.read_bytes() == b'existing-output'
     assert len(json.loads(dest.with_suffix('.substantive-filter.json').read_text())['chapters']) == 3
 
@@ -132,8 +135,8 @@ def test_cache_reapplies_inclusion_policy_without_api_calls(tmp_path, monkeypatc
     monkeypatch.setattr(cf, 'THRESHOLD', .99)
     def no_call(*args, **kwargs):
         raise AssertionError('threshold change should reuse judgments')
-    with pytest.raises(VlmError, match='No substantive chapters'):
-        filter_epub(source, dest, CONFIG, no_call)
+    result = filter_epub(source, dest, CONFIG, no_call)
+    assert result['status'] == 'no_articles'
     report = json.loads(dest.with_suffix('.substantive-filter.json').read_text())
     assert report['threshold'] == .99
     assert not any(c['included'] for c in report['chapters'])
@@ -284,3 +287,40 @@ def test_existing_epub_with_economist_entities_filters_without_changing_source(t
     assert 'Sources: S&P; Thompson Lloyd & Ewart;' in chapters[0]['text']
     assert '&unknown;' in chapters[0]['text']
     assert 'Normalized HTML entities in OPS/article.xhtml' in capsys.readouterr().out
+
+
+@pytest.mark.parametrize('in_place', [False, True])
+def test_empty_selection_preserves_source_and_never_creates_empty_epub(tmp_path, in_place, capsys):
+    source = tmp_path / 'catalog.epub'
+    dest = source if in_place else tmp_path / 'articles.epub'
+    make_epub(source)
+    original = source.read_bytes()
+    def reject(*args, **kwargs):
+        return {0: dict(kind='non_article', complete=True, confidence=.99, reason='Catalog')}
+    result = filter_epub(source, dest, CONFIG, reject)
+    assert result['status'] == 'no_articles'
+    assert source.read_bytes() == original
+    assert dest.exists() == in_place
+    assert not source.with_suffix('.unfiltered.epub').exists()
+    def no_call(*args, **kwargs):
+        raise AssertionError('completed decisions must resume without API calls')
+    assert filter_epub(source, dest, CONFIG, no_call)['status'] == 'no_articles'
+    assert 'Substantive chapters: 0/3; report:' in capsys.readouterr().out
+
+
+def test_zero_selection_with_unreadable_text_still_fails(tmp_path):
+    source, dest = tmp_path / 'catalog.epub', tmp_path / 'articles.epub'
+    make_epub(source)
+    with zipfile.ZipFile(source) as archive:
+        entries = [(i, archive.read(i)) for i in archive.infolist()]
+    with zipfile.ZipFile(source, 'w') as archive:
+        for info, data in entries:
+            if info.filename == 'OPS/article.xhtml':
+                data = data.replace(b'Developed analysis.', b'Bad \x00 text')
+            archive.writestr(info, data)
+    def reject(*args, **kwargs):
+        return {0: dict(kind='non_article', complete=True, confidence=.99, reason='Catalog')}
+    with pytest.raises(VlmError, match='unreadable XHTML'):
+        filter_epub(source, dest, CONFIG, reject)
+    assert not dest.exists()
+    assert json.loads(dest.with_suffix('.substantive-filter.json').read_text())['status'] == 'incomplete'

@@ -240,13 +240,14 @@ def main():
         destination = (Path(args.output_path) / source.name if args.output_path
                        else source.with_name(source.stem + '-substantive.epub'))
         try:
-            chapter_filter.filter_epub(source, destination, filter_config,
+            report = chapter_filter.filter_epub(source, destination, filter_config,
                                        progress=lambda done, total: vlm_lib._report_progress(
                                            'Article filter', done, total))
         except Exception as exc:
             print(f'Error filtering {source.name}: {exc}', file=sys.stderr)
             sys.exit(1)
-        print(f'Filtered EPUB: {destination}', flush=True)
+        if report['status'] == 'filtered':
+            print(f'Filtered EPUB: {destination}', flush=True)
         return
 
     metadata_args = collect_metadata_args(args)
@@ -365,11 +366,15 @@ def main():
                     epub_filename=epub_path.name,
                 )
                 if filter_config:
-                    chapter_filter.filter_epub(
+                    report = chapter_filter.filter_epub(
                         build_dir / epub_path.name, epub_path, filter_config,
                         progress=lambda done, total: vlm_lib._report_progress(
                             'Article filter', done, total),
                     )
+                    if report['status'] == 'no_articles':
+                        print(f'Article-filtered EPUB skipped: {pdf_path.name}; '
+                              'no qualifying articles; conversion files retained.', flush=True)
+                        continue
                     print(f'Article-filtered EPUB ready: {epub_path}', flush=True)
                 if not args.keep_intermediates:
                     if epub_path.is_file() and clean_working_directory(

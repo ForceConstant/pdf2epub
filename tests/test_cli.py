@@ -214,3 +214,45 @@ def test_failed_pdf_article_filter_never_publishes_raw_epub(tmp_path, monkeypatc
     else:
         assert not destination.exists()
     assert list(output.glob('.pdf2epub-work/**/.epub-unfiltered/*.epub'))
+
+
+@pytest.mark.parametrize('input_epub', [False, True])
+@pytest.mark.parametrize('existing_output', [False, True])
+def test_no_articles_cli_is_success_without_false_ready_marker_or_cleanup(tmp_path, monkeypatch, capsys, input_epub, existing_output):
+    from test_chapter_filter import make_epub, CONFIG
+    source = tmp_path / ('Catalog.epub' if input_epub else 'Catalog.pdf')
+    if input_epub:
+        make_epub(source)
+    else:
+        source.write_bytes(b'%PDF-1.4')
+    original = source.read_bytes()
+    output = tmp_path / 'output'
+    destination = output / ('Catalog.epub' if input_epub else 'Catalog/Catalog.epub')
+    if existing_output:
+        destination.parent.mkdir(parents=True)
+        destination.write_bytes(b'previous-output')
+    monkeypatch.setattr(cli.vlm_lib, 'read_vlm_config',
+                        lambda environ=None: CONFIG if environ is not None else None)
+    monkeypatch.setattr(cli.pdf2md, 'add_pdfs_to_queue', lambda path: [source])
+    monkeypatch.setattr(cli.pdf2md, 'convert_pdf', lambda src, work, *args: work.mkdir(parents=True))
+    monkeypatch.setattr(cli.mark2epub, 'convert_to_epub',
+                        lambda work, out, **kw: make_epub(out / kw['epub_filename']))
+    original_filter = cli.chapter_filter.filter_epub
+    def reject(*args, **kwargs):
+        return {0: dict(kind='non_article', complete=True, confidence=.99, reason='Catalog')}
+    monkeypatch.setattr(cli.chapter_filter, 'filter_epub',
+                        lambda src, dst, cfg, **kw: original_filter(src, dst, cfg, reject))
+    monkeypatch.setattr(sys, 'argv', ['main.py', str(source), str(output), '--yes', '--articles-only'])
+    cli.main()
+    assert source.read_bytes() == original
+    if existing_output:
+        assert destination.read_bytes() == b'previous-output'
+    else:
+        assert not destination.exists()
+    if not input_epub:
+        assert list(output.glob('.pdf2epub-work/**/.epub-unfiltered/*.epub'))
+    text = capsys.readouterr().out
+    assert 'Substantive chapters: 0/3; report:' in text
+    assert 'no EPUB produced' in text
+    assert 'Article-filtered EPUB ready:' not in text
+    assert 'Filtered EPUB:' not in text

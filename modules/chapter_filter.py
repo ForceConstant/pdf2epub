@@ -255,6 +255,8 @@ def filter_epub(source, destination, config, classifier=classify_article_chapter
         }
         decisions[path] = skipped_rows[path]
     report['threshold'] = THRESHOLD
+    # Cached judgments are reusable; a prior publication status is not.
+    report.update(status='classifying', output_written=False)
     for row in decisions.values():
         row['included'] = row['kind'] == 'article' and row['confidence'] >= THRESHOLD
     lock = threading.Lock()
@@ -298,8 +300,23 @@ def filter_epub(source, destination, config, classifier=classify_article_chapter
             future.result()
     persist()
     dropped = {path for path, row in decisions.items() if not row['included']}
-    if not any(chapter['path'] not in dropped for chapter in chapters):
-        raise VlmError(f'No substantive chapters selected; source unchanged; see {report_path}')
+    kept = sum(chapter['path'] not in dropped for chapter in chapters)
+    report.update(total_chapters=len(chapters), kept_chapters=kept,
+                  unreadable_chapters=len(skipped))
+    if not kept:
+        if skipped:
+            # Missing text is not evidence that a publication has no articles.
+            report['status'] = 'incomplete'
+            persist()
+            raise VlmError(f'No substantive chapters selected with unreadable XHTML; '
+                           f'source unchanged; see {report_path}')
+        report['status'] = 'no_articles'
+        persist()
+        print(f'\nSubstantive chapters: 0/{len(chapters)}; report: {report_path}',
+              flush=True)
+        print('Article filter complete: no qualifying articles; '
+              'no EPUB produced; existing files unchanged.', flush=True)
+        return report
     manifest = package.find(f'{{{OPF}}}manifest')
     ids = {node.attrib['id'] for node in manifest
            if node.get('href') and _local_target(package_path, node.get('href')) in dropped}
@@ -352,6 +369,8 @@ def filter_epub(source, destination, config, classifier=classify_article_chapter
         temporary.replace(destination)
     finally:
         temporary.unlink(missing_ok=True)
+    report.update(status='filtered', output_written=True)
+    persist()
     if skipped:
         print(f'Skipped {len(skipped)} unreadable XHTML chapter(s): '
               + ', '.join(path for path, _ in skipped), flush=True)
