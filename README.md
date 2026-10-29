@@ -423,7 +423,7 @@ before a digit. If an older staged EPUB already contains corrupted MathML, rebui
 from retained Markdown with `--skip-md --articles-only`; don't retranscribe the PDF
 or try to guess lost markup from the damaged EPUB.
 
-### Article-free publications (0.3.15+)
+### Article-free publications (0.3.16+)
 
 A completed `--articles-only` pass can legitimately select no chapters (for
 example, a publisher catalog made up of solicitations and previews). This now
@@ -439,5 +439,12 @@ A published filtered archive instead records `status: "filtered"` and
 `output_written: true`. Interrupted/API-failed passes are not completed outcomes;
 a zero-selection pass with unreadable XHTML remains an error. Refiltering the
 same saved EPUB reuses matching cached decisions without paid retranscription.
-Automation must validate the completed report rather than treating any missing
-EPUB or partial report as success.
+PDF reports also record `input_pdf_sha256` so batch producers can skip the exact
+completed source without accidentally skipping a changed file. Automation must
+validate the completed report rather than treating any missing EPUB or partial
+report as success.
+
+For Bash batch producers, `scripts/no-articles-completed.sh PDF REPORT` is a
+read-only skip predicate (requires `jq` and `sha256sum`). Exit 0 means the exact
+PDF has a complete no-articles report; changed input, partial/invalid reports,
+and missing dependencies return nonzero. It never invokes the converter.

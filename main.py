@@ -367,7 +367,7 @@ def main():
                 )
                 if filter_config:
                     report = chapter_filter.filter_epub(
-                        build_dir / epub_path.name, epub_path, filter_config,
+                        build_dir / epub_path.name, epub_path, filter_config, input_pdf=pdf_path,
                         progress=lambda done, total: vlm_lib._report_progress(
                             'Article filter', done, total),
                     )

@@ -324,3 +324,18 @@ def test_zero_selection_with_unreadable_text_still_fails(tmp_path):
         filter_epub(source, dest, CONFIG, reject)
     assert not dest.exists()
     assert json.loads(dest.with_suffix('.substantive-filter.json').read_text())['status'] == 'incomplete'
+
+
+def test_no_articles_report_binds_exact_pdf_content(tmp_path):
+    import hashlib
+    source, dest = tmp_path / 'catalog.epub', tmp_path / 'articles.epub'
+    pdf = tmp_path / 'catalog.pdf'
+    pdf.write_bytes(b'%PDF catalog fixture')
+    make_epub(source)
+    def reject(*args, **kwargs):
+        return {0: dict(kind='non_article', complete=True, confidence=.99, reason='Catalog')}
+    report = filter_epub(source, dest, CONFIG, reject, input_pdf=pdf)
+    assert report['input_pdf_sha256'] == hashlib.sha256(pdf.read_bytes()).hexdigest()
+    # A text-only refilter cannot inherit a stale PDF completion claim.
+    report = filter_epub(source, dest, CONFIG, reject)
+    assert 'input_pdf_sha256' not in report

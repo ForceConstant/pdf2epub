@@ -221,7 +221,7 @@ def _prune_links(root, document, dropped):
 
 
 def filter_epub(source, destination, config, classifier=classify_article_chapters,
-                progress=None):
+                progress=None, input_pdf=None):
     """Filter spine chapters; write auditable decisions and atomically install.
 
     The default CLI uses a separate output file. If source == destination a
@@ -257,6 +257,15 @@ def filter_epub(source, destination, config, classifier=classify_article_chapter
     report['threshold'] = THRESHOLD
     # Cached judgments are reusable; a prior publication status is not.
     report.update(status='classifying', output_written=False)
+    # Let batch producers skip this exact PDF after a completed empty selection,
+    # without trusting a filename alone (a replacement PDF must be retried).
+    report.pop('input_pdf_sha256', None)
+    if input_pdf is not None:
+        with Path(input_pdf).open('rb') as stream:
+            digest = hashlib.sha256()
+            for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+                digest.update(chunk)
+        report['input_pdf_sha256'] = digest.hexdigest()
     for row in decisions.values():
         row['included'] = row['kind'] == 'article' and row['confidence'] >= THRESHOLD
     lock = threading.Lock()
